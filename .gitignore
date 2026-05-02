@@ -1,0 +1,13 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+
+# Databases
+*.db
+*.sqlite
+
+# Tool outputs
+graphify-out/cache/
+graphify-out/.graphify_*
