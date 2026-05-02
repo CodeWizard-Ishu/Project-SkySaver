@@ -1,184 +1,183 @@
-# Graph Report - .  (2026-05-02)
+# Graph Report - .  (2026-05-03)
 
 ## Corpus Check
-- Corpus is ~5,040 words - fits in a single context window. You may not need a graph.
+- Corpus is ~14,395 words - fits in a single context window. You may not need a graph.
 
 ## Summary
-- 142 nodes · 201 edges · 21 communities detected
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 9 edges (avg confidence: 0.83)
+- 398 nodes · 938 edges · 21 communities detected
+- Extraction: 60% EXTRACTED · 40% INFERRED · 0% AMBIGUOUS · INFERRED: 379 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
-- [[_COMMUNITY_DB Testing & Mocks|DB Testing & Mocks]]
-- [[_COMMUNITY_Project Overview & Tech Stack|Project Overview & Tech Stack]]
-- [[_COMMUNITY_Route Configuration & Errors|Route Configuration & Errors]]
-- [[_COMMUNITY_Database Initialization|Database Initialization]]
-- [[_COMMUNITY_DB Connection & Basic Queries|DB Connection & Basic Queries]]
-- [[_COMMUNITY_Alert Logic Testing|Alert Logic Testing]]
-- [[_COMMUNITY_Price History & Data Models|Price History & Data Models]]
-- [[_COMMUNITY_Alerting & Price Statistics|Alerting & Price Statistics]]
-- [[_COMMUNITY_Data Ingestion & Logging|Data Ingestion & Logging]]
-- [[_COMMUNITY_Percentile Calculations & Errors|Percentile Calculations & Errors]]
-- [[_COMMUNITY_Route Monitoring Tests|Route Monitoring Tests]]
-- [[_COMMUNITY_Alert Log Tests|Alert Log Tests]]
-- [[_COMMUNITY_ML Forecasts|ML Forecasts]]
-- [[_COMMUNITY_Infrastructure & Hosting|Infrastructure & Hosting]]
-- [[_COMMUNITY_Cloud Platform|Cloud Platform]]
-- [[_COMMUNITY_AI Models (Claude)|AI Models (Claude)]]
-- [[_COMMUNITY_AI Models (Gemini)|AI Models (Gemini)]]
-- [[_COMMUNITY_Tools (Graphify)|Tools (Graphify)]]
-- [[_COMMUNITY_External APIs (Amadeus)|External APIs (Amadeus)]]
-- [[_COMMUNITY_Database Engine (SQLite)|Database Engine (SQLite)]]
-- [[_COMMUNITY_Database Engine (TimescaleDB)|Database Engine (TimescaleDB)]]
+- [[_COMMUNITY_Database Core & Alerts|Database Core & Alerts]]
+- [[_COMMUNITY_Database Testing & Mocks|Database Testing & Mocks]]
+- [[_COMMUNITY_Scraper Orchestration|Scraper Orchestration]]
+- [[_COMMUNITY_Rate Limiting & Web Automation|Rate Limiting & Web Automation]]
+- [[_COMMUNITY_Configuration & Logging|Configuration & Logging]]
+- [[_COMMUNITY_Rate Limiter Logic|Rate Limiter Logic]]
+- [[_COMMUNITY_Route Scraping Strategy|Route Scraping Strategy]]
+- [[_COMMUNITY_Price Parsing & Errors|Price Parsing & Errors]]
+- [[_COMMUNITY_Amadeus API Integration|Amadeus API Integration]]
+- [[_COMMUNITY_Data Normalization|Data Normalization]]
+- [[_COMMUNITY_Database Setup & Migration|Database Setup & Migration]]
+- [[_COMMUNITY_TinyFish Response Parsing|TinyFish Response Parsing]]
+- [[_COMMUNITY_Date Validation|Date Validation]]
+- [[_COMMUNITY_Project Vision & Core Concepts|Project Vision & Core Concepts]]
+- [[_COMMUNITY_Tech Stack & Dependencies|Tech Stack & Dependencies]]
+- [[_COMMUNITY_Token Reset Logic (TinyFish)|Token Reset Logic (TinyFish)]]
+- [[_COMMUNITY_Token Reset Logic (Amadeus)|Token Reset Logic (Amadeus)]]
+- [[_COMMUNITY_Logger Utility|Logger Utility]]
+- [[_COMMUNITY_AI Config (Flash)|AI Config (Flash)]]
+- [[_COMMUNITY_AI Config (Pro)|AI Config (Pro)]]
+- [[_COMMUNITY_Alert Decision logic|Alert Decision logic]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `_insert()` - 19 edges
-2. `get_connection()` - 18 edges
-3. `DatabaseError` - 11 edges
-4. `TestInsertPriceObservation` - 10 edges
-5. `TestGetAlertDecision` - 10 edges
-6. `_validate_route_format()` - 9 edges
-7. `update_price_stats()` - 9 edges
-8. `upsert_monitored_route()` - 7 edges
-9. `TestUpdatePriceStats` - 7 edges
-10. `create_tables()` - 6 edges
+1. `RateLimiter` - 104 edges
+2. `RouteScraperAgent` - 36 edges
+3. `AmadeusClient` - 31 edges
+4. `TinyFishRateLimitError` - 29 edges
+5. `TinyFishClient` - 29 edges
+6. `TinyFishInvalidResponseError` - 28 edges
+7. `ScraperOrchestrator` - 28 edges
+8. `AmadeusServerError` - 27 edges
+9. `ScrapedFare` - 27 edges
+10. `PriceParseError` - 26 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `create_tables()` --calls--> `get_connection()`  [INFERRED]
-  db\init_db.py → db\queries.py
-- `verify_schema()` --calls--> `get_connection()`  [INFERRED]
-  db\init_db.py → db\queries.py
-- `create_tables()` --calls--> `fresh_db()`  [INFERRED]
-  db\init_db.py → tests\test_db.py
-- `load_routes_from_config()` --calls--> `upsert_monitored_route()`  [INFERRED]
-  db\init_db.py → db\queries.py
-- `Oracle VPS` --semantically_similar_to--> `Oracle Cloud A1 Always-Free`  [INFERRED] [semantically similar]
-  memory-bank/projectbrief.md → memory-bank/techContext.md
+- `RateLimiter` --uses--> `TinyFish returned HTTP 429.`  [INFERRED]
+  agents\rate_limiter.py → agents\scraper_agent.py
+- `RateLimiter` --uses--> `Amadeus returned HTTP 5xx.`  [INFERRED]
+  agents\rate_limiter.py → agents\scraper_agent.py
+- `RateLimiter` --uses--> `Could not extract a valid INR price from the raw string.`  [INFERRED]
+  agents\rate_limiter.py → agents\scraper_agent.py
+- `RateLimiter` --uses--> `One normalised flight fare from any data source.`  [INFERRED]
+  agents\rate_limiter.py → agents\scraper_agent.py
+- `RateLimiter` --uses--> `Result of scraping one route+date pair.`  [INFERRED]
+  agents\rate_limiter.py → agents\scraper_agent.py
+
+## Hyperedges (group relationships)
+- **Scraping Orchestration Pattern** — scraper_agent_scraperorchestrator, scraper_agent_routescraperagent, rate_limiter_ratelimiter [EXTRACTED 1.00]
+- **Multi-Source Fallback Strategy** — scraper_agent_tinyfishclient, scraper_agent_amadeusclient, scraper_agent_routescraperagent [EXTRACTED 1.00]
+- **Data Integrity and Persistence** — queries_insert_price_observation, queries_update_price_stats, rate_limiter_ratelimiter [INFERRED 0.85]
 
 ## Communities
 
-### Community 0 - "DB Testing & Mocks"
-Cohesion: 0.09
-Nodes (9): _insert(), tests/test_db.py — Comprehensive pytest suite for db/queries.py and db/init_db.p, Hardcoded 20 prices — P10 must be exactly prices[1] (nearest rank)., Shortcut to insert one observation with sensible defaults., 10 threads each insert 5 rows — total must be 50, no corruption., TestGetObservationCountByRoute, TestGetPriceHistory, TestInsertPriceObservation (+1 more)
+### Community 0 - "Database Core & Alerts"
+Cohesion: 0.07
+Nodes (53): AlertCooldownError, AlertDecision, check_alert_cooldown(), close_connection(), _compute_percentile_rank(), DatabaseError, get_alert_decision(), get_all_active_routes() (+45 more)
 
-### Community 1 - "Project Overview & Tech Stack"
-Cohesion: 0.2
-Nodes (11): Flight Price AI Agent, Ishu Jaiswal, Nagpur Airport (NAG), Telegram, AG2 (AutoGen), LightGBM, n8n Community Edition, OpenClaw (+3 more)
+### Community 1 - "Database Testing & Mocks"
+Cohesion: 0.05
+Nodes (12): _insert(), tests/test_db.py — Comprehensive pytest suite for db/queries.py and db/init_db.p, Hardcoded 20 prices — P10 must be exactly prices[1] (nearest rank)., Shortcut to insert one observation with sensible defaults., 10 threads each insert 5 rows — total must be 50, no corruption., TestAlertLog, TestGetAlertDecision, TestGetObservationCountByRoute (+4 more)
 
-### Community 2 - "Route Configuration & Errors"
-Cohesion: 0.18
-Nodes (11): load_routes_from_config(), Parse config/routes.yaml and upsert every route into monitored_routes.      Args, AlertCooldownError, DatabaseError, Base exception for all database layer errors., Raised when querying a route not in monitored_routes., Insert or update a route in monitored_routes registry.      Sets created_at on f, Raised when an alert was already sent within the cooldown period. (+3 more)
+### Community 2 - "Scraper Orchestration"
+Cohesion: 0.12
+Nodes (36): AmadeusClient, AmadeusServerError, Manages a complete scrape run across all active monitored routes.      Lifecycle, TinyFish returned HTTP 429., Amadeus returned HTTP 5xx., One normalised flight fare from any data source., Aggregated result of a full scrape run across all routes., Thin wrapper around the TinyFish API with per-endpoint retry logic.      Retry s (+28 more)
 
-### Community 3 - "Database Initialization"
+### Community 3 - "Rate Limiting & Web Automation"
+Cohesion: 0.08
+Nodes (30): RateLimiter, Thread-safe rate limiter with JSON persistence across restarts.      All public, _build_google_flights_goal(), _build_skyscanner_goal(), _call_browser_with_retry(), _call_fetch_with_retry(), _extract_json_array(), _make_dedup_key() (+22 more)
+
+### Community 4 - "Configuration & Logging"
+Cohesion: 0.06
+Nodes (31): get_claude_sonnet_config(), get_gemini_flash_config(), get_gemini_pro_config(), get_logger(), _JsonFormatter, load_env(), agents/base_agent.py — Shared base utilities for all SkySaver agents.  Provides:, Return a configured logger with JSON formatter.      Idempotent — calling this t (+23 more)
+
+### Community 5 - "Rate Limiter Logic"
+Cohesion: 0.08
+Nodes (23): _empty_state(), agents/rate_limiter.py — Per-route and per-API rate limit enforcement.  Persists, Return ``True`` if enough time has elapsed since this route+date was scraped., Return ``True`` if TinyFish Browser calls today are below the safe limit., Return ``True`` if TinyFish Fetch calls today are below the safe limit., Return ``True`` if Amadeus API calls today are below the safe limit.          Au, Record that a scrape attempt just completed for this route+date.          Update, Increment the TinyFish call counter for *endpoint*.          Args:             e (+15 more)
+
+### Community 6 - "Route Scraping Strategy"
+Cohesion: 0.15
+Nodes (11): Responsible for scraping ONE route+date pair.      Priority order:       1. Tiny, Attempt to scrape one route+date pair, trying all sources in order.          Arg, Try each source in priority order.          Args:             route: Route strin, Attempt Amadeus fallback fetch.          Returns:             List of fares on s, Remove past-date fares and in-memory duplicates.          Args:             fare, Insert fares into the database.          Args:             fares: Validated, ded, Result of scraping one route+date pair., RouteScapeResult (+3 more)
+
+### Community 7 - "Price Parsing & Errors"
 Cohesion: 0.22
-Nodes (10): _check_sqlite_version(), create_tables(), _ensure_db_dir_writable(), db/init_db.py — Database initializer for SkySaver.  Run once on first boot (pyth, Create all 5 tables and their indexes. Safe to run multiple times.      Raises:, Check that all 5 tables exist with all expected columns.      Returns:         T, Raise PermissionError if the database directory is not writable., verify_schema() (+2 more)
+Nodes (5): _parse_price_inr(), PriceParseError, Could not extract a valid INR price from the raw string., Extract an integer INR fare from a raw price string.      Handles every real-wor, TestParsePriceInr
 
-### Community 4 - "DB Connection & Basic Queries"
+### Community 8 - "Amadeus API Integration"
+Cohesion: 0.17
+Nodes (7): _fetch_with_retry(), Validate and parse a route string into (origin, destination).      Valid format:, Fetch flight offers from Amadeus and return normalised ScrapedFare list., Perform the Amadeus API call and parse the response.          Args:, Map Amadeus SDK exceptions to scraper exceptions or safe empty lists.          A, _validate_route(), TestValidateRoute
+
+### Community 9 - "Data Normalization"
+Cohesion: 0.23
+Nodes (5): _normalise_airline(), _parse_single_tinyfish_fare(), Map a raw airline name to its canonical form.      Lookup is case-insensitive on, Attempt to parse one raw fare dict into a ScrapedFare.      Args:         item:, TestNormaliseAirline
+
+### Community 10 - "Database Setup & Migration"
 Cohesion: 0.18
-Nodes (11): _compute_percentile_rank(), get_all_active_routes(), get_connection(), _get_db_path(), get_observation_count_by_route(), get_recent_alerts(), Return the module-level thread-safe SQLite connection (lazy init).      Applies, Return what % of historical prices are ABOVE the given price. (+3 more)
+Nodes (12): _check_sqlite_version(), create_tables(), _ensure_db_dir_writable(), load_routes_from_config(), db/init_db.py — Database initializer for SkySaver.  Run once on first boot (pyth, Create all 5 tables and their indexes. Safe to run multiple times.      Raises:, Parse config/routes.yaml and upsert every route into monitored_routes.      Args, Check that all 5 tables exist with all expected columns.      Returns:         T (+4 more)
 
-### Community 5 - "Alert Logic Testing"
+### Community 11 - "TinyFish Response Parsing"
+Cohesion: 0.31
+Nodes (3): _parse_tinyfish_response(), Parse a raw TinyFish response string into a list of ScrapedFare.      Processing, TestParseTinyFishResponse
+
+### Community 12 - "Date Validation"
+Cohesion: 0.39
+Nodes (3): Validate that *travel_date* is in the future and within 365 days.      Args:, _validate_travel_date(), TestValidateTravelDate
+
+### Community 13 - "Project Vision & Core Concepts"
 Cohesion: 0.29
-Nodes (1): TestGetAlertDecision
+Nodes (8): SkySaver Project, insert_price_observation, update_price_stats, RateLimiter, AmadeusClient, RouteScraperAgent, ScraperOrchestrator, TinyFishClient
 
-### Community 6 - "Price History & Data Models"
-Cohesion: 0.28
-Nodes (8): AlertDecision, close_connection(), get_price_history(), PriceObservation, db/queries.py — Complete read/write API for SkySaver flight price database.  Thi, Cleanly close the database connection. Safe to call if never opened.      Called, Return price observations for a route+date within the last N days.      Args:, _row_to_price_observation()
-
-### Community 7 - "Alerting & Price Statistics"
-Cohesion: 0.25
-Nodes (8): check_alert_cooldown(), get_alert_decision(), get_price_stats(), PriceStats, Fetch the latest computed statistics for a route+date.      Args:         route:, Decide whether current_price warrants a Telegram alert.      Decision logic (fir, Check if a cooldown is active for this route+date.      Args:         route: Rou, _row_to_price_stats()
-
-### Community 8 - "Data Ingestion & Logging"
-Cohesion: 0.32
-Nodes (8): insert_price_observation(), log_alert_sent(), _now_utc_iso(), Insert one scraped price observation into flight_prices.      Calculates days_ad, Store one ML model prediction. Append-only — never updates existing rows.      A, Record that a Telegram alert was sent. Sets alerted_at to current UTC.      Args, store_ml_forecast(), _validate_route_format()
-
-### Community 9 - "Percentile Calculations & Errors"
-Cohesion: 0.33
-Nodes (6): InsufficientDataError, _percentile_nearest_rank(), Nearest-rank percentile on a sorted ascending list., Recalculate and upsert price_stats for a route+date pair.      Reads ALL observa, Raised when a route has fewer observations than the minimum required., update_price_stats()
-
-### Community 10 - "Route Monitoring Tests"
-Cohesion: 0.33
-Nodes (1): TestMonitoredRoutes
-
-### Community 11 - "Alert Log Tests"
-Cohesion: 0.4
-Nodes (1): TestAlertLog
-
-### Community 12 - "ML Forecasts"
-Cohesion: 0.67
-Nodes (3): get_latest_ml_forecast(), MLForecast, Return the most recent ML forecast for a route+date.      Args:         route: R
-
-### Community 13 - "Infrastructure & Hosting"
+### Community 14 - "Tech Stack & Dependencies"
 Cohesion: 1.0
-Nodes (2): Oracle VPS, Oracle Cloud A1 Always-Free
+Nodes (2): AG2 (AutoGen), SkySaver Tech Stack
 
-### Community 14 - "Cloud Platform"
+### Community 17 - "Token Reset Logic (TinyFish)"
 Cohesion: 1.0
-Nodes (1): Google Antigravity
+Nodes (1): Zero TinyFish counters if the stored date differs from today (UTC).
 
-### Community 15 - "AI Models (Claude)"
+### Community 18 - "Token Reset Logic (Amadeus)"
 Cohesion: 1.0
-Nodes (1): Claude Sonnet 4.6
+Nodes (1): Zero Amadeus counter if the stored date differs from today (UTC).
 
-### Community 16 - "AI Models (Gemini)"
+### Community 20 - "Logger Utility"
 Cohesion: 1.0
-Nodes (1): Gemini 2.5 Flash
+Nodes (1): get_logger
 
-### Community 17 - "Tools (Graphify)"
+### Community 21 - "AI Config (Flash)"
 Cohesion: 1.0
-Nodes (1): Graphify
+Nodes (1): get_gemini_flash_config
 
-### Community 18 - "External APIs (Amadeus)"
+### Community 22 - "AI Config (Pro)"
 Cohesion: 1.0
-Nodes (1): Amadeus Travel API
+Nodes (1): get_gemini_pro_config
 
-### Community 19 - "Database Engine (SQLite)"
+### Community 23 - "Alert Decision logic"
 Cohesion: 1.0
-Nodes (1): SQLite
-
-### Community 20 - "Database Engine (TimescaleDB)"
-Cohesion: 1.0
-Nodes (1): TimescaleDB
+Nodes (1): get_alert_decision
 
 ## Knowledge Gaps
-- **46 isolated node(s):** `Nagpur Airport (NAG)`, `Ishu Jaiswal`, `Oracle VPS`, `Oracle Cloud A1 Always-Free`, `Google Antigravity` (+41 more)
+- **80 isolated node(s):** `db/init_db.py — Database initializer for SkySaver.  Run once on first boot (pyth`, `Create all 5 tables and their indexes. Safe to run multiple times.      Raises:`, `Parse config/routes.yaml and upsert every route into monitored_routes.      Args`, `Check that all 5 tables exist with all expected columns.      Returns:         T`, `Raise PermissionError if the database directory is not writable.` (+75 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Alert Logic Testing`** (10 nodes): `TestGetAlertDecision`, `._seed_stats()`, `.test_alert_triggered_correctly()`, `.test_cooldown_blocks_second_alert()`, `.test_cooldown_expires()`, `.test_insufficient_observations()`, `.test_no_stats_yet()`, `.test_pct_below_median_negative()`, `.test_percentile_rank_calculated()`, `.test_price_above_p10()`
+- **Thin community `Tech Stack & Dependencies`** (2 nodes): `AG2 (AutoGen)`, `SkySaver Tech Stack`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Route Monitoring Tests`** (6 nodes): `TestMonitoredRoutes`, `.test_empty_travel_dates()`, `.test_invalid_route_format()`, `.test_paused_route_excluded()`, `.test_upsert_new_route()`, `.test_upsert_updates_existing()`
+- **Thin community `Token Reset Logic (TinyFish)`** (1 nodes): `Zero TinyFish counters if the stored date differs from today (UTC).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Alert Log Tests`** (5 nodes): `TestAlertLog`, `.test_cooldown_check_active()`, `.test_cooldown_check_expired()`, `.test_cooldown_check_no_prior_alert()`, `.test_log_alert_stores_correctly()`
+- **Thin community `Token Reset Logic (Amadeus)`** (1 nodes): `Zero Amadeus counter if the stored date differs from today (UTC).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Infrastructure & Hosting`** (2 nodes): `Oracle VPS`, `Oracle Cloud A1 Always-Free`
+- **Thin community `Logger Utility`** (1 nodes): `get_logger`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Cloud Platform`** (1 nodes): `Google Antigravity`
+- **Thin community `AI Config (Flash)`** (1 nodes): `get_gemini_flash_config`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `AI Models (Claude)`** (1 nodes): `Claude Sonnet 4.6`
+- **Thin community `AI Config (Pro)`** (1 nodes): `get_gemini_pro_config`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `AI Models (Gemini)`** (1 nodes): `Gemini 2.5 Flash`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Tools (Graphify)`** (1 nodes): `Graphify`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `External APIs (Amadeus)`** (1 nodes): `Amadeus Travel API`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Database Engine (SQLite)`** (1 nodes): `SQLite`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Database Engine (TimescaleDB)`** (1 nodes): `TimescaleDB`
+- **Thin community `Alert Decision logic`** (1 nodes): `get_alert_decision`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `create_tables()` connect `Database Initialization` to `DB Connection & Basic Queries`?**
-  _High betweenness centrality (0.383) - this node is a cross-community bridge._
-- **Why does `get_connection()` connect `DB Connection & Basic Queries` to `Route Configuration & Errors`, `Database Initialization`, `Price History & Data Models`, `Alerting & Price Statistics`, `Data Ingestion & Logging`, `Percentile Calculations & Errors`, `ML Forecasts`?**
-  _High betweenness centrality (0.368) - this node is a cross-community bridge._
-- **Why does `fresh_db()` connect `Database Initialization` to `DB Testing & Mocks`?**
+- **Why does `RateLimiter` connect `Rate Limiting & Web Automation` to `Scraper Orchestration`, `Configuration & Logging`, `Rate Limiter Logic`, `Route Scraping Strategy`, `Price Parsing & Errors`, `Amadeus API Integration`, `Data Normalization`, `TinyFish Response Parsing`, `Date Validation`?**
   _High betweenness centrality (0.361) - this node is a cross-community bridge._
-- **Are the 2 inferred relationships involving `get_connection()` (e.g. with `create_tables()` and `verify_schema()`) actually correct?**
-  _`get_connection()` has 2 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Nagpur Airport (NAG)`, `Ishu Jaiswal`, `Oracle VPS` to the rest of the system?**
-  _46 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `DB Testing & Mocks` be split into smaller, more focused modules?**
-  _Cohesion score 0.09 - nodes in this community are weakly interconnected._
+- **Why does `create_tables()` connect `Database Setup & Migration` to `Database Core & Alerts`, `Scraper Orchestration`?**
+  _High betweenness centrality (0.317) - this node is a cross-community bridge._
+- **Why does `fresh_db()` connect `Scraper Orchestration` to `Database Setup & Migration`?**
+  _High betweenness centrality (0.270) - this node is a cross-community bridge._
+- **Are the 89 inferred relationships involving `RateLimiter` (e.g. with `ScraperError` and `RouteScrapeFailed`) actually correct?**
+  _`RateLimiter` has 89 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 24 inferred relationships involving `RouteScraperAgent` (e.g. with `RateLimiter` and `TestParsePriceInr`) actually correct?**
+  _`RouteScraperAgent` has 24 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 22 inferred relationships involving `AmadeusClient` (e.g. with `RateLimiter` and `TestParsePriceInr`) actually correct?**
+  _`AmadeusClient` has 22 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 25 inferred relationships involving `TinyFishRateLimitError` (e.g. with `RateLimiter` and `TestParsePriceInr`) actually correct?**
+  _`TinyFishRateLimitError` has 25 INFERRED edges - model-reasoned connections that need verification._
