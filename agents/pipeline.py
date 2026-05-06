@@ -25,9 +25,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
-from agents.base_agent import get_logger, utcnow
+from agents.base_agent import get_logger, to_iso, utcnow
 from agents.analyzer_agent import AnalyzerAgent, AnalysisReport, build_price_summary
 from agents.forecast_engine import (
     ForecastScore,
@@ -209,7 +210,7 @@ class PipelineRunner:
             })
         )
 
-        return PipelineRunResult(
+        result = PipelineRunResult(
             started_at=started_at,
             finished_at=finished_at,
             scrape_result=scrape_result,
@@ -222,6 +223,71 @@ class PipelineRunner:
             errors=errors,
             total_duration_seconds=duration,
         )
+        self._save_last_run(result)
+        return result
+
+    def _save_last_run(self, result: PipelineRunResult) -> None:
+        """Persist the last run summary to db/last_run.json.
+
+        Uses an atomic write (write to .tmp then rename) so that the file is
+        never in a partial state if the process is killed mid-write.
+        Safe to call on both success and failure paths.
+        """
+        sr = result.scrape_result
+
+        # Coerce every field to a plain JSON-serialisable primitive.
+        # This guards against test mocks (MagicMock values) and any future
+        # dataclass fields that hold non-serialisable objects.
+        def _safe_int(v) -> int:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return 0
+
+        def _safe_float(v) -> float:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _safe_bool(v) -> bool:
+            try:
+                return bool(v)
+            except (TypeError, ValueError):
+                return False
+
+        def _safe_list(v) -> list:
+            try:
+                return [str(e) for e in v]
+            except (TypeError, ValueError):
+                return []
+
+        summary = {
+            "started_at": to_iso(result.started_at),
+            "finished_at": to_iso(result.finished_at),
+            "routes_attempted": _safe_int(sr.routes_attempted),
+            "routes_succeeded": _safe_int(sr.routes_succeeded),
+            "routes_failed": _safe_int(sr.routes_failed),
+            "total_fares_scraped": _safe_int(sr.total_fares_scraped),
+            "total_fares_stored": _safe_int(
+                sr.total_fares_stored if hasattr(sr, "total_fares_stored") else 0
+            ),
+            "alerts_sent": _safe_int(result.alerts_sent),
+            "alerts_suppressed": _safe_int(result.alerts_suppressed),
+            "retrain_triggered": _safe_bool(result.retrain_triggered),
+            "total_duration_seconds": _safe_float(result.total_duration_seconds),
+            "errors": _safe_list(result.errors),
+        }
+        last_run_path = Path("db/last_run.json")
+        tmp_path = last_run_path.with_suffix(".json.tmp")
+        try:
+            last_run_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            tmp_path.rename(last_run_path)   # atomic on Linux (same filesystem)
+            _log.info(json.dumps({"event": "last_run_saved", "path": str(last_run_path)}))
+        except Exception as exc:
+            # Non-critical persistence step — log and continue; never kill the pipeline.
+            _log.error(json.dumps({"event": "last_run_save_failed", "error": str(exc)}))
 
     def _process_route(
         self, route: str, travel_date: date

@@ -1,0 +1,14 @@
+{
+  "started_at": "2026-05-06T19:53:36Z",
+  "finished_at": "2026-05-06T19:53:36Z",
+  "routes_attempted": 1,
+  "routes_succeeded": 0,
+  "routes_failed": 1,
+  "total_fares_scraped": 1,
+  "total_fares_stored": 0,
+  "alerts_sent": 0,
+  "alerts_suppressed": 0,
+  "retrain_triggered": false,
+  "total_duration_seconds": 0.023801,
+  "errors": []
+}
