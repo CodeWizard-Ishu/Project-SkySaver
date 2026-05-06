@@ -5,6 +5,7 @@
 ### Your Personal Flight Price Watchdog — Automatically Finds the Best Fares & Alerts You
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![AG2](https://img.shields.io/badge/AG2%20AutoGen-0.9+-FF6B35?style=for-the-badge)](https://github.com/ag2ai/ag2)
 [![Gemini](https://img.shields.io/badge/Gemini%20AI-Flash%20%7C%20Pro-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://deepmind.google/gemini)
 [![SQLite](https://img.shields.io/badge/SQLite-Database-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://sqlite.org)
@@ -25,8 +26,9 @@ Imagine having a smart assistant that:
 - **Sends you an alert** only when the price is *genuinely* low — not just a random fluctuation
 - **Never spams you** — it respects cooldown periods so you only get meaningful notifications
 - **Predicts future prices** using a trained ML model so you know whether to book now or wait
+- **Exposes a full REST API** — query prices, trigger scrapes, and manage alerts via HTTP
 
-That's SkySaver. It's a Python-based backend system that runs quietly in the background, scrapes flight data from multiple sources, stores it in a database, uses smart statistics to decide when a price is worth your attention, and employs a ML Forecast Engine to score upcoming prices.
+That's SkySaver. It's a Python-based backend system that runs quietly in the background, scrapes flight data from multiple sources, stores it in a database, uses smart statistics to decide when a price is worth your attention, and employs a ML Forecast Engine to score upcoming prices — all served through a production-ready FastAPI application.
 
 ---
 
@@ -41,7 +43,10 @@ That's SkySaver. It's a Python-based backend system that runs quietly in the bac
 - 📊 **Price Statistics** — Calculates P10, P50, P90 percentile baselines per route automatically
 - 📈 **ML Forecast Engine** — LightGBM-based model generates a `ForecastScore` with feature engineering and versioned model files
 - 🔔 **Alert Engine** — Dedicated `AlertEngine` module evaluates `AlertDecision` objects and formats rich alert messages
-- 🧪 **Fully Tested** — Comprehensive pytest test suite covering all core logic including Phase 3 integration tests
+- 🌐 **REST API** — Full FastAPI application with routes for scraping, prices, alerts, status, and health checks
+- 🔐 **API Key Auth** — All protected endpoints require an `X-SkySaver-Key` header; `/health` is publicly accessible
+- 🆔 **Request Tracing** — Every request gets a UUID4 `request_id` attached automatically via middleware
+- 🧪 **Fully Tested** — Comprehensive pytest test suite covering all core logic, Phase 3 integration tests, and Phase 4 API tests
 
 ---
 
@@ -80,23 +85,37 @@ Project - SkySaver/
 │
 ├── 🤖 agents/
 │   ├── base_agent.py        ← Shared utilities: logger, env loader, AI model configs
-│   ├── rate_limiter.py      ← Tracks & enforces API call limits (thread-safe)
-│   └── scraper_agent.py     ← Core scraping logic: TinyFish + Amadeus + Orchestrator
+│   ├── rate_limiter.py      ← Tracks & enforces API call limits (thread-safe, JSON-persisted)
+│   ├── scraper_agent.py     ← Core scraping logic: TinyFish + Amadeus + Orchestrator
+│   ├── analyzer_agent.py    ← AnalyzerAgent: builds AnalysisReport from pipeline output
+│   ├── alert_engine.py      ← AlertEngine: evaluates AlertDecision + formats messages
+│   ├── forecast_engine.py   ← ForecastEngine: LightGBM model, feature engineering
+│   ├── pipeline.py          ← PipelineRunner: orchestrates full scrape → analyze → alert flow
+│   └── __init__.py
+│
+├── 🌐 api/
+│   ├── main.py              ← FastAPI application factory (create_app); mounts all routers
+│   ├── dependencies.py      ← Shared FastAPI dependencies (DB session, API key validation)
+│   ├── schemas.py           ← Pydantic request/response models
+│   ├── __init__.py
+│   └── routes/
+│       ├── scrape.py        ← POST /api/v1/scrape/run — trigger a scrape run
+│       ├── prices.py        ← GET /api/v1/prices — query stored price observations
+│       ├── routes.py        ← GET/POST /api/v1/routes — manage monitored routes
+│       ├── alerts.py        ← GET /api/v1/alerts — query alert history + cooldown status
+│       ├── status.py        ← GET /api/v1/status — pipeline & system status
+│       └── __init__.py
 │
 ├── 🗄️ db/
 │   ├── init_db.py           ← Creates database tables on first boot
-│   └── queries.py           ← All database read/write operations + alert decisions
-│
-├── 🔔 alerts/
-│   └── alert_engine.py      ← AlertEngine: evaluates AlertDecision + formats messages
-│
-├── 📈 forecast/
-│   └── forecast_engine.py   ← ForecastEngine: LightGBM model, feature engineering, versioned model files
+│   ├── queries.py           ← All database read/write operations + alert decisions
+│   └── __init__.py
 │
 ├── 🧪 tests/
 │   ├── test_db.py           ← Tests for database layer
 │   ├── test_scraper.py      ← Tests for scraping agents
-│   └── test_integration.py  ← Phase 3 integration tests (PipelineRunner + AnalyzerAgent)
+│   ├── test_phase3.py       ← Phase 3 integration tests (PipelineRunner + AnalyzerAgent)
+│   └── test_api.py          ← Phase 4 API tests (FastAPI TestClient, all endpoints)
 │
 ├── ⚙️ config/
 │   └── routes.yaml          ← List of flight routes to monitor (e.g. BOM-DEL)
@@ -105,6 +124,8 @@ Project - SkySaver/
 │   ├── projectbrief.md      ← Project goals & vision
 │   └── techContext.md       ← Technical decisions & context
 │
+├── gunicorn_conf.py         ← Gunicorn production server configuration
+├── graphify_detect.py       ← Code graph analysis utility
 ├── requirements.txt         ← All Python dependencies
 └── .env                     ← Your API keys (never commit this!)
 ```
@@ -126,6 +147,8 @@ Project - SkySaver/
 | 🔔 Decides if a price is good enough to alert | **AlertEngine** |
 | 📈 Predicts whether a price will rise or drop | **ForecastEngine** |
 | 📊 Summarises a full price analysis run | **AnalysisReport** |
+| 🔁 Runs the full pipeline end-to-end | **PipelineRunner** |
+| 🌐 Serves everything over HTTP | **FastAPI (REST API)** |
 
 ### For Developers
 
@@ -137,11 +160,52 @@ Project - SkySaver/
 | `AmadeusClient` | `agents/scraper_agent.py` | Amadeus SDK wrapper with error mapping and normalisation |
 | `RateLimiter` | `agents/rate_limiter.py` | Thread-safe, JSON-persisted rate limiter for all APIs |
 | `BaseAgent` | `agents/base_agent.py` | Logger, `.env` loader, Gemini/Claude config factory |
-| `AlertEngine` | `alerts/alert_engine.py` | Evaluates `AlertDecision`, formats alert messages, logs to DB |
-| `ForecastEngine` | `forecast/forecast_engine.py` | LightGBM price prediction, feature engineering, versioned model files |
+| `AnalyzerAgent` | `agents/analyzer_agent.py` | Builds `AnalysisReport` from scrape + forecast + alert outputs |
+| `AlertEngine` | `agents/alert_engine.py` | Evaluates `AlertDecision`, formats alert messages, logs to DB |
+| `ForecastEngine` | `agents/forecast_engine.py` | LightGBM price prediction, feature engineering, versioned model files |
+| `PipelineRunner` | `agents/pipeline.py` | Orchestrates the full scrape → analyse → alert pipeline |
+| `create_app()` | `api/main.py` | FastAPI application factory; mounts all routers at `/api/v1/` |
+| `RequestIDMiddleware` | `api/main.py` | Attaches UUID4 `request_id` to every request and response |
 | `AnalysisReport` | *(pipeline output)* | Aggregated output of a full scrape + alert + forecast pipeline run |
 | `init_db` | `db/init_db.py` | Creates 5 DB tables + indexes, loads routes from YAML |
 | `queries` | `db/queries.py` | All SQL: insert, update, alert decision, percentile computation |
+
+---
+
+## 🌐 REST API
+
+SkySaver exposes a full **FastAPI** application, served via Gunicorn in production.
+
+### Authentication
+
+All endpoints (except `/health`) require the `X-SkySaver-Key` header:
+
+```
+X-SkySaver-Key: your_api_key_here
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Liveness probe — no auth required |
+| `GET` | `/api/v1/status` | Pipeline & system status |
+| `POST` | `/api/v1/scrape/run` | Trigger a scrape run; returns `ScrapeRunResponse` |
+| `GET` | `/api/v1/prices` | Query stored price observations |
+| `GET` | `/api/v1/routes` | List all monitored routes |
+| `POST` | `/api/v1/routes` | Add a new route to monitor |
+| `GET` | `/api/v1/alerts` | Query alert history |
+| `GET` | `/api/v1/alerts/cooldown` | Check alert cooldown status |
+
+### Running the API
+
+```bash
+# Development
+uvicorn api.main:create_app --factory --reload
+
+# Production (Gunicorn)
+gunicorn -c gunicorn_conf.py "api.main:create_app()"
+```
 
 ---
 
@@ -169,12 +233,14 @@ SkySaver is built on the **AG2 (AutoGen)** AI agent framework and supports multi
 | `Gemini Flash` | Fast, lightweight AI tasks |
 | `Gemini Pro` | Advanced reasoning tasks |
 | `Claude Sonnet` | Alternative LLM option |
+| `FastAPI` | REST API layer (Phase 4) |
+| `Gunicorn` | Production WSGI/ASGI server |
 | `Amadeus SDK` | Official flight data API |
 | `TinyFish API` | Browser-based flight scraping |
 | `SQLite` | Local database (zero config) |
 | `Tenacity` | Automatic retry logic on failures |
 | `FileLock` | Thread-safe file operations |
-| `LightGBM` | ML price forecasting (Phase 4 — active) |
+| `LightGBM` | ML price forecasting |
 | `PyTorch` | Deep learning support for future model experiments |
 | `requests` | HTTP client for API calls |
 | `pytest` | Automated testing |
@@ -213,6 +279,9 @@ python -m db.init_db
 
 # 7. Run SkySaver!
 python -m agents.scraper_agent
+
+# 8. Or start the API server
+uvicorn api.main:create_app --factory --reload
 ```
 
 ### Configure Routes
@@ -234,6 +303,7 @@ AMADEUS_CLIENT_ID=your_amadeus_key
 AMADEUS_CLIENT_SECRET=your_amadeus_secret
 TINYFISH_API_KEY=your_tinyfish_key
 GEMINI_API_KEY=your_gemini_key
+SKYSAVER_API_KEY=your_api_key_for_rest_api
 ```
 
 ---
@@ -254,7 +324,10 @@ pytest tests/test_db.py
 pytest tests/test_scraper.py
 
 # Run Phase 3 integration tests
-pytest tests/test_integration.py
+pytest tests/test_phase3.py
+
+# Run Phase 4 API tests
+pytest tests/test_api.py
 ```
 
 ---
@@ -302,8 +375,8 @@ SkySaver tracks every API call and enforces limits automatically:
 - [x] **Phase 1** — Core scraping engine (TinyFish + Amadeus)
 - [x] **Phase 2** — SQLite database + alert decision logic
 - [x] **Phase 3** — Rate limiting + multi-source fallback + integration tests
-- [x] **Phase 4** — ML price prediction with LightGBM (ForecastEngine — active)
-- [ ] **Phase 5** — Telegram bot integration for alerts
+- [x] **Phase 4** — ML price prediction with LightGBM (ForecastEngine) + FastAPI REST layer
+- [ ] **Phase 5** — Telegram bot integration for real-time alerts
 - [ ] **Phase 6** — Web dashboard for price history visualisation
 
 ---
