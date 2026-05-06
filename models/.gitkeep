@@ -1,0 +1,2 @@
+# This file keeps the models/ directory tracked in git.
+# LightGBM model files (*.pkl) are generated here at runtime.
