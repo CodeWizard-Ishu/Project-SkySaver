@@ -24,8 +24,9 @@ Imagine having a smart assistant that:
 - **Remembers historical prices** and builds a picture of what's cheap vs expensive
 - **Sends you an alert** only when the price is *genuinely* low — not just a random fluctuation
 - **Never spams you** — it respects cooldown periods so you only get meaningful notifications
+- **Predicts future prices** using a trained ML model so you know whether to book now or wait
 
-That's SkySaver. It's a Python-based backend system that runs quietly in the background, scrapes flight data from multiple sources, stores it in a database, and uses smart statistics to decide when a price is worth your attention.
+That's SkySaver. It's a Python-based backend system that runs quietly in the background, scrapes flight data from multiple sources, stores it in a database, uses smart statistics to decide when a price is worth your attention, and employs a ML Forecast Engine to score upcoming prices.
 
 ---
 
@@ -38,7 +39,9 @@ That's SkySaver. It's a Python-based backend system that runs quietly in the bac
 - 💾 **Persistent Memory** — All prices, stats, and alert history are saved in a local SQLite database
 - 🤖 **AI-Powered** — Built on AG2 (AutoGen) framework with Google Gemini Flash/Pro and Claude Sonnet support
 - 📊 **Price Statistics** — Calculates P10, P50, P90 percentile baselines per route automatically
-- 🧪 **Fully Tested** — Comprehensive pytest test suite covering all core logic
+- 📈 **ML Forecast Engine** — LightGBM-based model generates a `ForecastScore` with feature engineering and versioned model files
+- 🔔 **Alert Engine** — Dedicated `AlertEngine` module evaluates `AlertDecision` objects and formats rich alert messages
+- 🧪 **Fully Tested** — Comprehensive pytest test suite covering all core logic including Phase 3 integration tests
 
 ---
 
@@ -59,9 +62,13 @@ Every scheduled run:
         ↓
 6. 💾 Save to database & update price statistics
         ↓
-7. 🔔 Check: Is today's price in the bottom 10% historically?
+7. 📈 Run Forecast Engine → generate ForecastScore for the route
         ↓
-8. 📣 YES → Fire alert! | NO → Sleep and try again next run
+8. 🔔 AlertEngine checks: Is today's price in the bottom 10% historically?
+        ↓
+9. 📊 Produce AnalysisReport with price trend + forecast summary
+        ↓
+10. 📣 YES → Fire alert! | NO → Sleep and try again next run
 ```
 
 ---
@@ -80,9 +87,16 @@ Project - SkySaver/
 │   ├── init_db.py           ← Creates database tables on first boot
 │   └── queries.py           ← All database read/write operations + alert decisions
 │
+├── 🔔 alerts/
+│   └── alert_engine.py      ← AlertEngine: evaluates AlertDecision + formats messages
+│
+├── 📈 forecast/
+│   └── forecast_engine.py   ← ForecastEngine: LightGBM model, feature engineering, versioned model files
+│
 ├── 🧪 tests/
 │   ├── test_db.py           ← Tests for database layer
-│   └── test_scraper.py      ← Tests for scraping agents
+│   ├── test_scraper.py      ← Tests for scraping agents
+│   └── test_integration.py  ← Phase 3 integration tests (PipelineRunner + AnalyzerAgent)
 │
 ├── ⚙️ config/
 │   └── routes.yaml          ← List of flight routes to monitor (e.g. BOM-DEL)
@@ -109,7 +123,9 @@ Project - SkySaver/
 | ✈️ Gets prices from Amadeus (backup source) | **AmadeusClient** |
 | 🚦 Makes sure we don't call APIs too often | **RateLimiter** |
 | 🗃️ Stores and retrieves all price data | **SQLite Database** |
-| 🔔 Decides if a price is good enough to alert | **Alert Engine** |
+| 🔔 Decides if a price is good enough to alert | **AlertEngine** |
+| 📈 Predicts whether a price will rise or drop | **ForecastEngine** |
+| 📊 Summarises a full price analysis run | **AnalysisReport** |
 
 ### For Developers
 
@@ -121,6 +137,9 @@ Project - SkySaver/
 | `AmadeusClient` | `agents/scraper_agent.py` | Amadeus SDK wrapper with error mapping and normalisation |
 | `RateLimiter` | `agents/rate_limiter.py` | Thread-safe, JSON-persisted rate limiter for all APIs |
 | `BaseAgent` | `agents/base_agent.py` | Logger, `.env` loader, Gemini/Claude config factory |
+| `AlertEngine` | `alerts/alert_engine.py` | Evaluates `AlertDecision`, formats alert messages, logs to DB |
+| `ForecastEngine` | `forecast/forecast_engine.py` | LightGBM price prediction, feature engineering, versioned model files |
+| `AnalysisReport` | *(pipeline output)* | Aggregated output of a full scrape + alert + forecast pipeline run |
 | `init_db` | `db/init_db.py` | Creates 5 DB tables + indexes, loads routes from YAML |
 | `queries` | `db/queries.py` | All SQL: insert, update, alert decision, percentile computation |
 
@@ -136,6 +155,7 @@ SkySaver stores everything in a local **SQLite** database (no setup needed — i
 | `price_observations` | Every single price data point ever collected |
 | `price_stats` | Computed P10 / P50 / P90 baselines per route |
 | `alert_log` | History of every alert ever fired (prevents spam) |
+| `forecast_scores` | ML-generated ForecastScore records per route + date |
 
 ---
 
@@ -154,7 +174,9 @@ SkySaver is built on the **AG2 (AutoGen)** AI agent framework and supports multi
 | `SQLite` | Local database (zero config) |
 | `Tenacity` | Automatic retry logic on failures |
 | `FileLock` | Thread-safe file operations |
-| `LightGBM + PyTorch` | ML price prediction *(Phase 4 — coming soon)* |
+| `LightGBM` | ML price forecasting (Phase 4 — active) |
+| `PyTorch` | Deep learning support for future model experiments |
+| `requests` | HTTP client for API calls |
 | `pytest` | Automated testing |
 
 ---
@@ -230,21 +252,36 @@ pytest tests/test_db.py
 
 # Run only scraper tests
 pytest tests/test_scraper.py
+
+# Run Phase 3 integration tests
+pytest tests/test_integration.py
 ```
 
 ---
 
 ## 🔔 How the Alert System Works
 
-SkySaver uses **percentile-based statistics** to make smart alert decisions — not simple price thresholds.
+SkySaver uses **percentile-based statistics** combined with the **AlertEngine** to make smart alert decisions — not simple price thresholds.
 
 1. Every price observation is saved to the database
 2. After enough data is collected, SkySaver computes the **P10 baseline** — the price below which only 10% of historical observations fall
-3. When a new price comes in **below the P10**, it's considered a genuinely good deal
+3. When a new price comes in **below the P10**, `AlertEngine` evaluates the `AlertDecision` object
 4. A cooldown check prevents duplicate alerts for the same route within a short period
-5. If both checks pass → **Alert fires!** 🔔
+5. If both checks pass → `AlertEngine` **fires the alert and formats the message** 🔔
 
 > **In plain English:** If a flight normally costs ₹5,000–₹12,000 and today it's ₹3,800, SkySaver recognises that's in the bottom 10% of prices ever seen — and tells you immediately.
+
+---
+
+## 📈 Forecast Engine
+
+The **ForecastEngine** uses a trained **LightGBM** model to predict whether a flight price is likely to rise or fall, giving you a `ForecastScore` alongside every alert.
+
+- `build_features()` — Extracts time-series and route-based features from historical price data
+- `generate_labels()` — Auto-labels training data (price went up / down) for supervised learning
+- `_load_all_price_data()` — Reads the full observation history from SQLite for training
+- **Versioned model files** — Each trained model is saved with a version number; `_latest_model_path()` always loads the most recent one
+- `AnalysisReport` — The combined output of a full pipeline run: scrape results + alert decision + forecast score
 
 ---
 
@@ -264,8 +301,8 @@ SkySaver tracks every API call and enforces limits automatically:
 
 - [x] **Phase 1** — Core scraping engine (TinyFish + Amadeus)
 - [x] **Phase 2** — SQLite database + alert decision logic
-- [x] **Phase 3** — Rate limiting + multi-source fallback
-- [ ] **Phase 4** — ML price prediction with LightGBM + PyTorch
+- [x] **Phase 3** — Rate limiting + multi-source fallback + integration tests
+- [x] **Phase 4** — ML price prediction with LightGBM (ForecastEngine — active)
 - [ ] **Phase 5** — Telegram bot integration for alerts
 - [ ] **Phase 6** — Web dashboard for price history visualisation
 
