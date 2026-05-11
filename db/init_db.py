@@ -1,7 +1,7 @@
-"""db/init_db.py — Database initializer for SkySaver.
+﻿"""db/init_db.py â€” Database initializer for SkySaver.
 
 Run once on first boot (python db/init_db.py) or call create_tables() for
-programmatic use. All DDL uses IF NOT EXISTS — safely re-runnable.
+programmatic use. All DDL uses IF NOT EXISTS â€” safely re-runnable.
 Reads DATABASE_PATH from env (fallback: ./db/flight_prices.db).
 """
 
@@ -19,14 +19,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
+                    format="%(asctime)s [%(levelname)s] %(name)s â€” %(message)s")
 logger = logging.getLogger("flight_agent.db.init")
 
 _MIN_SQLITE = (3, 35, 0)
 
-# ── DDL Statements ───────────────────────────────────────────────────────────
+# â”€â”€ DDL Statements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _TABLES: list[str] = [
     """CREATE TABLE IF NOT EXISTS flight_prices (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +41,7 @@ _TABLES: list[str] = [
         CHECK (price_inr  > 0),
         CHECK (stops     >= 0),
         CHECK (days_advance >= 0),
-        CHECK (source IN ('skyscanner','google_flights','amadeus'))
+        CHECK (source IN ('skyscanner','google_flights','skyscrapper'))
     )""",
     """CREATE TABLE IF NOT EXISTS price_stats (
         route              TEXT    NOT NULL,
@@ -102,7 +102,7 @@ _EXPECTED_COLUMNS: dict[str, set[str]] = {
 }
 
 
-# ─── PUBLIC API ──────────────────────────────────────────────────────────────
+# â”€â”€â”€ PUBLIC API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def create_tables() -> None:
     """Create all 5 tables and their indexes. Safe to run multiple times.
@@ -114,7 +114,7 @@ def create_tables() -> None:
     _check_sqlite_version()
     _ensure_db_dir_writable()
 
-    from db.queries import get_connection  # lazy — avoids circular import
+    from db.queries import get_connection  # lazy â€” avoids circular import
 
     conn = get_connection()
     with conn:
@@ -138,7 +138,7 @@ def load_routes_from_config(config_path: Path | None = None) -> int:
         FileNotFoundError: If routes.yaml does not exist.
         ValueError: If the YAML structure is malformed.
     """
-    import yaml  # PyYAML — only third-party dep in this file
+    import yaml  # PyYAML â€” only third-party dep in this file
     from db.queries import upsert_monitored_route
 
     if config_path is None:
@@ -201,7 +201,7 @@ def verify_schema() -> bool:
     return all_ok
 
 
-# ─── PRIVATE HELPERS ─────────────────────────────────────────────────────────
+# â”€â”€â”€ PRIVATE HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _check_sqlite_version() -> None:
     ver = tuple(int(x) for x in sqlite3.sqlite_version.split("."))
@@ -215,7 +215,7 @@ def _check_sqlite_version() -> None:
 
 def _ensure_db_dir_writable() -> None:
     """Raise PermissionError if the database directory is not writable."""
-    # Read path directly — avoids importing db.queries before sys.path is set.
+    # Read path directly â€” avoids importing db.queries before sys.path is set.
     db_dir = Path(os.environ.get("DATABASE_PATH", "./db/flight_prices.db")).parent
     db_dir.mkdir(parents=True, exist_ok=True)
     if not os.access(db_dir, os.W_OK):
@@ -225,7 +225,7 @@ def _ensure_db_dir_writable() -> None:
         )
 
 
-# ─── ENTRYPOINT ──────────────────────────────────────────────────────────────
+# â”€â”€â”€ ENTRYPOINT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
@@ -257,10 +257,11 @@ if __name__ == "__main__":
         print(f"[INIT] Loaded {route_count} routes from config/routes.yaml")
     except FileNotFoundError as exc:
         print(f"[INIT] WARNING: {exc}", file=sys.stderr)
-        print("[INIT] Continuing without routes — add them via the API.")
+        print("[INIT] Continuing without routes â€” add them via the API.")
 
     if not verify_schema():
         print("[INIT] FATAL: Schema verification failed.", file=sys.stderr)
         sys.exit(1)
 
     print("[INIT] Database ready.")
+

@@ -15,7 +15,7 @@ State file format (JSON):
     "fetch": 8,
     "date": "2026-05-01"
   },
-  "amadeus_calls_today": {
+  "skyscrapper_calls_today": {
     "count": 2,
     "date": "2026-05-01"
   }
@@ -38,7 +38,7 @@ _STATE_FILE = Path("./db/rate_limiter_state.json")
 # Safe daily limits (below API hard limits to leave a safety buffer)
 TINYFISH_BROWSER_LIMIT: int = 18   # hard limit ~20/day
 TINYFISH_FETCH_LIMIT: int = 45     # hard limit ~50/day
-AMADEUS_DAILY_LIMIT: int = 450     # hard limit 500/day (50-call buffer)
+SKYSCRAPPER_DAILY_LIMIT: int = 6   # 200/month ÷ 31 days, conservative
 
 _DEFAULT_MIN_INTERVAL_MINUTES: int = 300  # 5 hours between scrapes per route+date
 
@@ -85,7 +85,7 @@ def _empty_state() -> dict[str, Any]:
             "fetch": 0,
             "date": today,
         },
-        "amadeus_calls_today": {
+        "skyscrapper_calls_today": {
             "count": 0,
             "date": today,
         },
@@ -218,23 +218,23 @@ class RateLimiter:
         )
         return allowed
 
-    def can_use_amadeus(self) -> bool:
-        """Return ``True`` if Amadeus API calls today are below the safe limit.
+    def can_use_skyscrapper(self) -> bool:
+        """Return ``True`` if Sky Scrapper API calls today are below the safe limit.
 
-        Automatically resets the counter when a new calendar day (UTC) starts.
+        Automatically resets the counter when a new calendar day starts.
 
         Returns:
-            ``True`` if another Amadeus call is permitted today.
+            ``True`` if another Sky Scrapper call is permitted today.
         """
         state = self._read_state()
-        state = self._reset_amadeus_if_new_day(state)
-        used = state["amadeus_calls_today"]["count"]
-        allowed = used < AMADEUS_DAILY_LIMIT
+        state = self._reset_skyscrapper_if_new_day(state)
+        used = state["skyscrapper_calls_today"]["count"]
+        allowed = used < SKYSCRAPPER_DAILY_LIMIT
         _logger.debug(
             json.dumps({
-                "event": "amadeus_limit_check",
+                "event": "skyscrapper_limit_check",
                 "used": used,
-                "limit": AMADEUS_DAILY_LIMIT,
+                "limit": SKYSCRAPPER_DAILY_LIMIT,
                 "allowed": allowed,
             })
         )
@@ -297,18 +297,18 @@ class RateLimiter:
             })
         )
 
-    def record_amadeus_call(self) -> None:
-        """Increment the Amadeus API call counter for today.
+    def record_skyscrapper_call(self) -> None:
+        """Increment the Sky Scrapper API call counter for today.
 
         Side effects:
             Writes to :attr:`_state_file`.
         """
         with self._lock:
             state = self._read_state_locked()
-            state = self._reset_amadeus_if_new_day(state)
-            state["amadeus_calls_today"]["count"] += 1
+            state = self._reset_skyscrapper_if_new_day(state)
+            state["skyscrapper_calls_today"]["count"] += 1
             self._write_state_locked(state)
-        _logger.debug(json.dumps({"event": "amadeus_call_recorded"}))
+        _logger.debug(json.dumps({"event": "skyscrapper_call_recorded"}))
 
     def get_status(self) -> dict[str, Any]:
         """Return a summary dict for the /status FastAPI endpoint.
@@ -316,12 +316,12 @@ class RateLimiter:
         Returns:
             Dict with keys: ``tinyfish_browser_used_today``,
             ``tinyfish_browser_limit``, ``tinyfish_fetch_used_today``,
-            ``tinyfish_fetch_limit``, ``amadeus_used_today``,
-            ``amadeus_limit``, ``routes_on_cooldown``.
+            ``tinyfish_fetch_limit``, ``skyscrapper_used_today``,
+            ``skyscrapper_limit``, ``routes_on_cooldown``.
         """
         state = self._read_state()
         state = self._reset_tinyfish_if_new_day(state)
-        state = self._reset_amadeus_if_new_day(state)
+        state = self._reset_skyscrapper_if_new_day(state)
 
         now = datetime.now(timezone.utc)
         on_cooldown: list[str] = []
@@ -336,8 +336,8 @@ class RateLimiter:
             "tinyfish_browser_limit": TINYFISH_BROWSER_LIMIT,
             "tinyfish_fetch_used_today": state["tinyfish_calls_today"]["fetch"],
             "tinyfish_fetch_limit": TINYFISH_FETCH_LIMIT,
-            "amadeus_used_today": state["amadeus_calls_today"]["count"],
-            "amadeus_limit": AMADEUS_DAILY_LIMIT,
+            "skyscrapper_used_today": state["skyscrapper_calls_today"]["count"],
+            "skyscrapper_limit": SKYSCRAPPER_DAILY_LIMIT,
             "routes_on_cooldown": on_cooldown,
         }
 
@@ -403,9 +403,12 @@ class RateLimiter:
         return state
 
     @staticmethod
-    def _reset_amadeus_if_new_day(state: dict[str, Any]) -> dict[str, Any]:
-        """Zero Amadeus counter if the stored date differs from today (UTC)."""
+    def _reset_skyscrapper_if_new_day(state: dict[str, Any]) -> dict[str, Any]:
+        """Zero Sky Scrapper counter if the stored date differs from today."""
         today = _today_str()
-        if state["amadeus_calls_today"].get("date") != today:
-            state["amadeus_calls_today"] = {"count": 0, "date": today}
+        # Ensure key exists (handles state files written before this key was added)
+        if "skyscrapper_calls_today" not in state:
+            state["skyscrapper_calls_today"] = {"count": 0, "date": today}
+        elif state["skyscrapper_calls_today"].get("date") != today:
+            state["skyscrapper_calls_today"] = {"count": 0, "date": today}
         return state

@@ -25,7 +25,7 @@ import os
 
 logger = logging.getLogger("flight_agent.db")
 
-_VALID_SOURCES = frozenset({"skyscanner", "google_flights", "amadeus"})
+_VALID_SOURCES = frozenset({"skyscanner", "google_flights", "skyscrapper"})
 _ROUTE_RE = re.compile(r"^[A-Z]{2,4}-[A-Z]{2,4}$")
 
 # ─── EXCEPTIONS ─────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ def insert_price_observation(
         price_inr: Fare in INR (must be > 0).
         airline: Airline name e.g. "IndiGo".
         stops: Number of stops (0 = non-stop).
-        source: One of skyscanner | google_flights | amadeus.
+        source: One of skyscanner | google_flights | skyscrapper.
 
     Returns:
         Auto-generated row ID of the inserted observation.
