@@ -1,6 +1,5 @@
 [Unit]
 Description=SkySaver Flight Price AI Agent — FastAPI Service
-Documentation=https://github.com/your-repo/flight-agent
 After=network.target
 Wants=network-online.target
 
@@ -8,34 +7,27 @@ Wants=network-online.target
 Type=exec
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/home/ubuntu/flight-agent
-Environment="PATH=/home/ubuntu/flight-agent/venv/bin"
-EnvironmentFile=/home/ubuntu/flight-agent/.env
+WorkingDirectory=/home/ubuntu/SkySaver
+Environment="PATH=/home/ubuntu/SkySaver/venv/bin"
+EnvironmentFile=/home/ubuntu/SkySaver/.env
 
-ExecStart=/home/ubuntu/flight-agent/venv/bin/gunicorn \
+ExecStart=/home/ubuntu/SkySaver/venv/bin/gunicorn \
     -c gunicorn_conf.py \
     "api.main:create_app()"
 
-# Restart policy — restart on any failure, wait 10s between restarts.
-# StartLimitBurst=3 prevents infinite restart loops in < 60s windows.
 Restart=always
 RestartSec=10
 StartLimitIntervalSec=60
-StartLimitBurst=3
+StartLimitBurst=5
 
-# Resource limits — prevent OOM from taking down the whole VPS.
-# 24 GB total: 8GB for SkySaver, leaving 16GB for n8n + OS + headroom.
-MemoryMax=8G
-# Allow up to 3 of 4 vCPUs (leave 1 for n8n + OS scheduler).
-CPUQuota=300%
+MemoryMax=6G
+CPUQuota=150%
 
-# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/home/ubuntu/flight-agent
+ReadWritePaths=/home/ubuntu/SkySaver
 
-# Logging — captured by journald
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=skysaver

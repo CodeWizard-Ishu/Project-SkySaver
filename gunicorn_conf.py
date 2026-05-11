@@ -19,14 +19,14 @@ Timeout rationale:
 import os
 
 # ── Workers ───────────────────────────────────────────────────────────────────
-workers = int(os.getenv("GUNICORN_WORKERS", 3))
+workers = 3
 worker_class = "uvicorn.workers.UvicornWorker"
 
 # ── Binding ───────────────────────────────────────────────────────────────────
-bind = os.getenv("BIND", "127.0.0.1:8000")  # localhost only — nginx proxies externally
+bind = "127.0.0.1:8000" # localhost only — nginx proxies externally
 
 # ── Timeouts ─────────────────────────────────────────────────────────────────
-timeout = int(os.getenv("WORKER_TIMEOUT", 600))   # 10 minutes — covers full pipeline run
+timeout = 600   # 10 minutes — covers full pipeline run
 graceful_timeout = 60   # time to finish in-flight requests on SIGTERM
 keepalive = 5           # seconds to keep idle client connections alive
 

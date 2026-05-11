@@ -782,7 +782,7 @@ class TinyFishClient:
             "endpoint": endpoint,
         }).encode("utf-8")
 
-        url = "https://api.tinyfish.io/v1/agent"
+        url = "https://api.fetch.tinyfish.ai/v1/agent"
         req = urllib.request.Request(
             url,
             data=payload,

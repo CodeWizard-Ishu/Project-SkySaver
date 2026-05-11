@@ -205,18 +205,12 @@ def get_gemini_flash_config() -> "Any":
             "Get your key from https://aistudio.google.com/app/apikey"
         )
 
-    from autogen import LLMConfig  # type: ignore[import-untyped]
-
-    return LLMConfig(
-        config_list=[
-            {
-                "model": "gemini-2.5-flash",
-                "api_type": "google",
-                "api_key": api_key,
-                "thinking_budget": 0,        # DISABLED — speed over reasoning for parsing
-            }
-        ]
-    )
+    return {
+        "model": "gemini-2.5-flash",
+        "api_type": "google",
+        "api_key": api_key,
+        "thinking_budget": 0,
+    }
 
 
 def get_gemini_pro_config() -> "Any":
@@ -246,20 +240,13 @@ def get_gemini_pro_config() -> "Any":
             "Get your key from https://aistudio.google.com/app/apikey"
         )
 
-    from autogen import LLMConfig  # type: ignore[import-untyped]
-
-    return LLMConfig(
-        config_list=[
-            {
-                "model": "gemini-2.5-pro",
-                "api_type": "google",
-                "api_key": api_key,
-                "thinking_budget": -1,       # AUTOMATIC — model decides thinking depth
-                "include_thoughts": False,   # Do not include thought summaries in response
-                                             # (cleaner output for structured JSON responses)
-            }
-        ]
-    )
+    return {
+        "model": "gemini-2.5-pro",
+        "api_type": "google",
+        "api_key": api_key,
+        "thinking_budget": -1,
+        "include_thoughts": False,
+    }
 
 
 # ─── PUBLIC: TIMING DECORATOR ─────────────────────────────────────────────────

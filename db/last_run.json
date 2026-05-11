@@ -1,14 +1,14 @@
 {
-  "started_at": "2026-05-06T19:53:36Z",
-  "finished_at": "2026-05-06T19:53:36Z",
+  "started_at": "2026-05-10T21:38:12Z",
+  "finished_at": "2026-05-10T21:38:12Z",
   "routes_attempted": 1,
-  "routes_succeeded": 0,
+  "routes_succeeded": 1,
   "routes_failed": 1,
   "total_fares_scraped": 1,
-  "total_fares_stored": 0,
+  "total_fares_stored": 1,
   "alerts_sent": 0,
-  "alerts_suppressed": 0,
+  "alerts_suppressed": 1,
   "retrain_triggered": false,
-  "total_duration_seconds": 0.023801,
+  "total_duration_seconds": 0.001483,
   "errors": []
 }
