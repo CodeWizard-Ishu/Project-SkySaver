@@ -821,6 +821,7 @@ class TinyFishClient:
             payload = json.dumps({"urls": [target_url]}).encode("utf-8")
             timeout = 35
 
+        url = "https://api.fetch.tinyfish.ai/v1/agent"
         req = urllib.request.Request(
             api_url,
             data=payload,

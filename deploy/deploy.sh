@@ -19,7 +19,7 @@
 set -euo pipefail
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-PROJECT_DIR="/home/ubuntu/flight-agent"
+PROJECT_DIR="/home/ubuntu/SkySaver"
 VENV_DIR="$PROJECT_DIR/venv"
 SERVICE_NAME="skysaver"
 NGINX_CONF="/etc/nginx/sites-available/skysaver"
