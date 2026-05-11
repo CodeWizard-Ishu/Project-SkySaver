@@ -391,12 +391,12 @@ def _build_skyscanner_goal(
     """
     date_str = travel_date.strftime("%d %B %Y")
     return (
-        f"Go to https://www.skyscanner.co.in and search for one-way flights "
+        f"Go to https://www.skyscanner.com and search for one-way flights "
         f"from {origin} to {destination} departing on {date_str}. "
         f"Wait for the results to fully load (price list must be visible). "
         f"Extract the 5 cheapest available fares from the results list. "
         f"For each fare, return a JSON object with these exact keys: "
-        f"price_inr (integer, no currency symbol, no commas), "
+        f"price_inr (integer, convert any currency to Indian Rupees at current rate, no symbol, no commas), "
         f"airline (carrier name string), "
         f"stops (integer: 0 for direct/non-stop, 1 for one-stop, 2 for two or more stops), "
         f"departure_time (string HH:MM 24h format, e.g. '06:30'). "
@@ -761,43 +761,76 @@ class TinyFishClient:
     ) -> str:
         """Perform the actual HTTP call to TinyFish.
 
+        Routing (new API architecture — api.tinyfish.io is dead):
+          browser → POST agent.tinyfish.ai/v1/automation/run
+                    payload: {url, goal, browser_profile: "stealth"}
+                    response: {status, result: <object>, error}
+                    The ``result`` value is serialised back to a JSON string
+                    so the existing _parse_tinyfish_response() works unchanged.
+
+          fetch   → POST api.fetch.tinyfish.ai
+                    payload: {urls: [<extracted-url>]}
+                    response: [{url, content: <markdown>}]
+                    Returns the ``content`` markdown string directly; the LLM
+                    parser in _parse_tinyfish_response will extract fares from it.
+
         Args:
             endpoint: ``"browser"`` or ``"fetch"``.
-            goal: Goal string for the agent.
+            goal: Goal/instruction string (also encodes the target URL).
             route: Route string for error context.
 
         Returns:
-            Raw text response.
+            Raw text response (JSON array string for browser; markdown for fetch).
 
         Raises:
             TinyFishRateLimitError: On HTTP 429.
-            TinyFishInvalidResponseError: On HTTP 422.
-            TinyFishTimeoutError: On request timeout.
-            ScraperError: On HTTP 503 or other unexpected errors.
+            TinyFishInvalidResponseError: On HTTP 422 / bad input.
+            TinyFishTimeoutError: On request timeout / connection error.
+            ScraperError: On HTTP 5xx or other unexpected errors.
         """
+        import re
         import urllib.error
-        import urllib.parse
         import urllib.request
 
-        payload = json.dumps({
-            "goal": goal,
-            "endpoint": endpoint,
-        }).encode("utf-8")
+        headers = {
+            "X-API-Key": self._api_key,
+            "Content-Type": "application/json",
+        }
 
-        url = "https://api.tinyfish.io/v1/agent"
+        if endpoint == "browser":
+            # Extract the starting URL from the goal string ("Go to <url> and ...")
+            url_match = re.search(r"https?://[^\s]+", goal)
+            start_url = url_match.group(0).rstrip(".") if url_match else "https://www.skyscanner.co.in"
+            api_url = "https://agent.tinyfish.ai/v1/automation/run"
+            payload = json.dumps({
+                "url": start_url,
+                "goal": goal,
+                "browser_profile": "stealth",      # fingerprint randomisation + anti-bot headers
+                "proxy_config": {
+                    "enabled": True,
+                    "type": "tetra",               # TinyFish managed rotating residential proxies
+                    "country_code": "US",          # US tetra proxy — lighter DataDome checks than GB
+                },
+            }).encode("utf-8")
+            timeout = 180  # proxy + stealth combo can add 30-60s on top of normal browser runs
+        else:
+            # fetch: extract the URL from the goal and hand it to the fetch API
+            url_match = re.search(r"https?://[^\s]+", goal)
+            target_url = url_match.group(0).rstrip(".") if url_match else "https://www.google.com/travel/flights"
+            api_url = "https://api.fetch.tinyfish.ai"
+            payload = json.dumps({"urls": [target_url]}).encode("utf-8")
+            timeout = 35
+
         req = urllib.request.Request(
-            url,
+            api_url,
             data=payload,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=35) as resp:
-                return resp.read().decode("utf-8")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             match exc.code:
                 case 429:
@@ -811,17 +844,18 @@ class TinyFishClient:
                     raise TinyFishRateLimitError(
                         f"TinyFish {endpoint} HTTP 429 for route {route}"
                     ) from exc
-                case 422:
+                case 422 | 400:
+                    body = exc.read().decode("utf-8", errors="replace")[:300]
                     self._logger.error(
                         json.dumps({
                             "event": "tinyfish_invalid_goal",
                             "route": route,
                             "endpoint": endpoint,
-                            "goal_snippet": goal[:200],
+                            "response": body,
                         })
                     )
                     raise TinyFishInvalidResponseError(
-                        f"TinyFish rejected goal string (HTTP 422) for route {route}"
+                        f"TinyFish rejected request (HTTP {exc.code}) for route {route}: {body}"
                     ) from exc
                 case 503:
                     raise ScraperError(
@@ -839,6 +873,41 @@ class TinyFishClient:
             raise TinyFishTimeoutError(
                 f"TinyFish {endpoint} connection error for route {route}: {exc}"
             ) from exc
+
+        # ── post-process response into the string format _parse_tinyfish_response expects ──
+        if endpoint == "browser":
+            # Agent API returns: {"status": "COMPLETED", "result": {...}, ...}
+            # result may be a dict (structured output) or a string (raw LLM output).
+            try:
+                data = json.loads(raw)
+                status = data.get("status", "")
+                if status == "FAILED":
+                    err = data.get("error") or {}
+                    raise ScraperError(
+                        f"TinyFish agent run FAILED for route {route}: {err}"
+                    )
+                result = data.get("result")
+                if result is None:
+                    return raw  # pass through so parser can handle/raise
+                # If result is already a list or dict, serialise it as JSON string
+                if isinstance(result, (list, dict)):
+                    return json.dumps(result)
+                return str(result)
+            except (json.JSONDecodeError, KeyError):
+                return raw  # pass raw through; _parse_tinyfish_response will handle
+
+        else:
+            # Fetch API returns: [{"url": ..., "content": "<markdown>", ...}]
+            try:
+                items = json.loads(raw)
+                if isinstance(items, list) and items:
+                    content = items[0].get("content") or items[0].get("markdown") or raw
+                    return content
+            except (json.JSONDecodeError, IndexError, KeyError):
+                pass
+            return raw
+
+
 
 
 class SkyScrappperClient:
