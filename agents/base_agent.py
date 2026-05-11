@@ -2,7 +2,7 @@
 
 Provides: LLM config factories, structured JSON logger, environment validator,
 timing decorator, and UTC datetime helpers. Intentionally has ZERO imports from
-ag2/tinyfish/amadeus so this module can be imported without those packages.
+ag2/tinyfish/skyscrapper so this module can be imported without those packages.
 """
 
 # ─── GEMINI MODEL STRATEGY FOR THIS PROJECT ────────────────────────────────────
@@ -52,11 +52,11 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 _REQUIRED_ENV_VARS: tuple[str, ...] = (
     "GEMINI_API_KEY",          # single key for ALL LLM purposes (Flash + Pro)
     "TINYFISH_API_KEY",
-    "AMADEUS_CLIENT_ID",
-    "AMADEUS_CLIENT_SECRET",
+    "RAPIDAPI_KEY",            # Sky Scrapper API via RapidAPI (Tier 3 fallback)
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
     "DATABASE_PATH",
+    "SKYSAVER_API_KEY",        # API authentication key for the FastAPI layer
 )
 
 # ─── LOG FORMAT ──────────────────────────────────────────────────────────────
@@ -186,14 +186,16 @@ def load_env() -> None:
 # ─── PUBLIC: LLM CONFIG FACTORIES ───────────────────────────────────────────
 
 
-def get_gemini_flash_config() -> "Any":
+def get_gemini_flash_config() -> dict:
     """
-    Return AG2 LLMConfig for Gemini 2.5 Flash.
+    Return AG2 config dict for Gemini 2.5 Flash.
 
     Use for: TinyFish response parsing, HTML fare extraction, bulk pattern matching.
     Thinking is DISABLED (thinking_budget=0) — Flash is used for speed and cost,
     not deep reasoning. At $0.30/$2.50 per 1M tokens, this is the cheapest
     production-quality option for structured extraction tasks.
+
+    Returns a plain dict — compatible with ag2>=0.3 which dropped LLMConfig().
 
     Side effects: None.
     Raises: RuntimeError if GEMINI_API_KEY is not set in environment.
@@ -209,11 +211,11 @@ def get_gemini_flash_config() -> "Any":
         "model": "gemini-2.5-flash",
         "api_type": "google",
         "api_key": api_key,
-        "thinking_budget": 0,
+        "thinking_budget": 0,        # DISABLED — speed over reasoning for parsing
     }
 
 
-def get_gemini_pro_config() -> "Any":
+def get_gemini_pro_config() -> dict:
     """
     Return AG2 LLMConfig for Gemini 2.5 Pro with automatic thinking enabled.
 
@@ -244,8 +246,9 @@ def get_gemini_pro_config() -> "Any":
         "model": "gemini-2.5-pro",
         "api_type": "google",
         "api_key": api_key,
-        "thinking_budget": -1,
-        "include_thoughts": False,
+        "thinking_budget": -1,       # AUTOMATIC — model decides thinking depth
+        "include_thoughts": False,   # Do not include thought summaries in response
+                                     # (cleaner output for structured JSON responses)
     }
 
 

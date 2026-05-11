@@ -1,6 +1,6 @@
-"""tests/test_scraper.py — Comprehensive pytest suite for Phase 2 scraping layer.
+﻿"""tests/test_scraper.py â€” Comprehensive pytest suite for Phase 2 scraping layer.
 
-All external APIs (TinyFish, Amadeus) are fully mocked — zero real API calls.
+All external APIs (TinyFish, SkyScrapper) are fully mocked â€” zero real API calls.
 Uses isolated SQLite DB via tmp_path + monkeypatch (same pattern as test_db.py).
 """
 
@@ -20,8 +20,8 @@ from db.init_db import create_tables
 from agents.rate_limiter import RateLimiter
 from agents.scraper_agent import (
     AIRLINE_NORMALISATION_MAP,
-    AmadeusClient,
-    AmadeusServerError,
+    SkyScrappperClient,
+    SkyScrapprrAPIError,
     PriceParseError,
     RouteScapeResult,
     RouteScraperAgent,
@@ -39,7 +39,7 @@ from agents.scraper_agent import (
     _validate_travel_date,
 )
 
-# ─── CONSTANTS ────────────────────────────────────────────────────────────────
+# â”€â”€â”€ CONSTANTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _FUTURE_DATE = date.today() + timedelta(days=60)
 _ROUTE = "NAG-DEL"
@@ -50,20 +50,22 @@ _VALID_TF_JSON = json.dumps([
     {"price_inr": 4100, "airline": "SpiceJet", "stops": 0, "departure_time": "14:00"},
 ])
 
-_VALID_AMADEUS_OFFER = {
-    "price": {"grandTotal": "3240.00"},
-    "itineraries": [{
-        "segments": [{"carrierCode": "6E"}],
+_VALID_SKYSCRAPPER_ITINERARY = {
+    "price": {"raw": 3240},
+    "legs": [{
+        "carriers": {"marketing": [{"name": "IndiGo"}]},
+        "stopCount": 0,
+        "departure": "06:30",
     }],
 }
 
 
-# ─── DB FIXTURE ──────────────────────────────────────────────────────────────
+# â”€â”€â”€ DB FIXTURE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.fixture(autouse=True)
 def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Isolated SQLite DB per test — never touches the real flight_prices.db."""
+    """Isolated SQLite DB per test â€” never touches the real flight_prices.db."""
     db_path = str(tmp_path / "test_scraper.db")
     monkeypatch.setenv("DATABASE_PATH", db_path)
     Q._conn = None
@@ -79,7 +81,7 @@ def tmp_state(tmp_path: Path) -> Path:
     return tmp_path / "rate_limiter_state.json"
 
 
-# ─── TINYFISH MOCK FIXTURES ──────────────────────────────────────────────────
+# â”€â”€â”€ TINYFISH MOCK FIXTURES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.fixture()
@@ -112,13 +114,13 @@ def mock_tinyfish_always_fails() -> MagicMock:
     return mock
 
 
-# ─── AMADEUS MOCK FIXTURES ───────────────────────────────────────────────────
+# â”€â”€â”€ SKY SCRAPPER MOCK FIXTURES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.fixture()
-def mock_amadeus_success() -> MagicMock:
-    """AmadeusClient that returns 3 valid ScrapedFare objects."""
-    mock = MagicMock(spec=AmadeusClient)
+def mock_skyscrapper_success() -> MagicMock:
+    """SkyScrappperClient that returns 3 valid ScrapedFare objects."""
+    mock = MagicMock(spec=SkyScrappperClient)
     mock.fetch_fares.return_value = [
         ScrapedFare(
             route=_ROUTE,
@@ -126,8 +128,8 @@ def mock_amadeus_success() -> MagicMock:
             price_inr=3240,
             airline="IndiGo",
             stops=0,
-            source="amadeus",
-            raw_price_str="3240.00",
+            source="skyscrapper",
+            raw_price_str="3240",
             scraped_at=datetime.now(UTC),
         ),
         ScrapedFare(
@@ -136,8 +138,18 @@ def mock_amadeus_success() -> MagicMock:
             price_inr=3680,
             airline="Air India",
             stops=1,
-            source="amadeus",
-            raw_price_str="3680.00",
+            source="skyscrapper",
+            raw_price_str="3680",
+            scraped_at=datetime.now(UTC),
+        ),
+        ScrapedFare(
+            route=_ROUTE,
+            travel_date=_FUTURE_DATE,
+            price_inr=4100,
+            airline="SpiceJet",
+            stops=0,
+            source="skyscrapper",
+            raw_price_str="4100",
             scraped_at=datetime.now(UTC),
         ),
     ]
@@ -145,14 +157,14 @@ def mock_amadeus_success() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_amadeus_fails() -> MagicMock:
-    """AmadeusClient that raises AmadeusServerError on every call."""
-    mock = MagicMock(spec=AmadeusClient)
-    mock.fetch_fares.side_effect = AmadeusServerError("500")
+def mock_skyscrapper_always_fails() -> MagicMock:
+    """SkyScrappperClient that raises SkyScrapprrAPIError on every call."""
+    mock = MagicMock(spec=SkyScrappperClient)
+    mock.fetch_fares.side_effect = SkyScrapprrAPIError("500")
     return mock
 
 
-# ─── RATE LIMITER MOCK FIXTURES ──────────────────────────────────────────────
+# â”€â”€â”€ RATE LIMITER MOCK FIXTURES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.fixture()
@@ -162,28 +174,28 @@ def mock_rate_limiter_all_ok() -> MagicMock:
     mock.can_scrape_route.return_value = True
     mock.can_use_tinyfish_browser.return_value = True
     mock.can_use_tinyfish_fetch.return_value = True
-    mock.can_use_amadeus.return_value = True
+    mock.can_use_skyscrapper.return_value = True
     return mock
 
 
 @pytest.fixture()
 def mock_rate_limiter_tinyfish_exhausted() -> MagicMock:
-    """RateLimiter where TinyFish is exhausted, Amadeus still available."""
+    """RateLimiter where TinyFish is exhausted, Sky Scrapper still available."""
     mock = MagicMock(spec=RateLimiter)
     mock.can_scrape_route.return_value = True
     mock.can_use_tinyfish_browser.return_value = False
     mock.can_use_tinyfish_fetch.return_value = False
-    mock.can_use_amadeus.return_value = True
+    mock.can_use_skyscrapper.return_value = True
     return mock
 
 
-# ─── TestParsePriceInr ────────────────────────────────────────────────────────
+# â”€â”€â”€ TestParsePriceInr â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestParsePriceInr:
 
     def test_rupee_symbol_with_commas(self) -> None:
-        assert _parse_price_inr("₹3,240") == 3240
+        assert _parse_price_inr("â‚¹3,240") == 3240
 
     def test_inr_prefix(self) -> None:
         assert _parse_price_inr("INR 3,240") == 3240
@@ -214,14 +226,14 @@ class TestParsePriceInr:
             _parse_price_inr("null")
 
     def test_very_large_price_lakh_format(self) -> None:
-        assert _parse_price_inr("₹1,20,000") == 120000
+        assert _parse_price_inr("â‚¹1,20,000") == 120000
 
     def test_whitespace_only_raises(self) -> None:
         with pytest.raises(PriceParseError):
             _parse_price_inr("   ")
 
 
-# ─── TestNormaliseAirline ─────────────────────────────────────────────────────
+# â”€â”€â”€ TestNormaliseAirline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestNormaliseAirline:
@@ -262,7 +274,7 @@ class TestNormaliseAirline:
         assert _normalise_airline("QP") == "Akasa Air"
 
 
-# ─── TestParseTinyFishResponse ────────────────────────────────────────────────
+# â”€â”€â”€ TestParseTinyFishResponse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestParseTinyFishResponse:
@@ -314,7 +326,7 @@ class TestParseTinyFishResponse:
             _parse_tinyfish_response(data, _ROUTE, _FUTURE_DATE, "skyscanner")
 
 
-# ─── TestValidateRoute ────────────────────────────────────────────────────────
+# â”€â”€â”€ TestValidateRoute â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestValidateRoute:
@@ -341,7 +353,7 @@ class TestValidateRoute:
             _validate_route("NAG-DE-L")
 
 
-# ─── TestValidateTravelDate ───────────────────────────────────────────────────
+# â”€â”€â”€ TestValidateTravelDate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestValidateTravelDate:
@@ -365,7 +377,7 @@ class TestValidateTravelDate:
         _validate_travel_date(date.today() + timedelta(days=365))
 
 
-# ─── TestRouteScraperAgent ────────────────────────────────────────────────────
+# â”€â”€â”€ TestRouteScraperAgent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _make_agent(
@@ -378,7 +390,7 @@ def _make_agent(
     return RouteScraperAgent(
         rate_limiter=rl,
         tinyfish_client=tf or MagicMock(spec=TinyFishClient),
-        amadeus_client=am or MagicMock(spec=AmadeusClient),
+        amadeus_client=am or MagicMock(spec=SkyScrappperClient),
         dedup_set=dedup if dedup is not None else set(),
     )
 
@@ -389,10 +401,10 @@ class TestRouteScraperAgent:
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         agent = _make_agent(
-            mock_rate_limiter_all_ok, mock_tinyfish_success, mock_amadeus_success
+            mock_rate_limiter_all_ok, mock_tinyfish_success, mock_skyscrapper_success
         )
         result = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result.error is None
@@ -408,42 +420,42 @@ class TestRouteScraperAgent:
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         mock_rate_limiter_all_ok.can_use_tinyfish_browser.return_value = True
         # Browser call fails, fetch succeeds
         mock_tinyfish_success.call_browser.side_effect = TinyFishRateLimitError("429")
         agent = _make_agent(
-            mock_rate_limiter_all_ok, mock_tinyfish_success, mock_amadeus_success
+            mock_rate_limiter_all_ok, mock_tinyfish_success, mock_skyscrapper_success
         )
         result = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result.error is None
         assert result.source_used == "google_flights"
         assert result.fares_stored == 3
 
-    def test_tinyfish_all_fails_amadeus(
+    def test_tinyfish_all_fail_skyscrapper(
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_always_fails: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         agent = _make_agent(
-            mock_rate_limiter_all_ok, mock_tinyfish_always_fails, mock_amadeus_success
+            mock_rate_limiter_all_ok, mock_tinyfish_always_fails, mock_skyscrapper_success
         )
         result = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result.error is None
-        assert result.source_used == "amadeus"
+        assert result.source_used == "skyscrapper"
         assert result.fallback_used is True
-        assert result.fares_stored == 2
+        assert result.fares_stored == 3
 
     def test_all_sources_fail_returns_error(
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_always_fails: MagicMock,
-        mock_amadeus_fails: MagicMock,
+        mock_skyscrapper_always_fails: MagicMock,
     ) -> None:
         agent = _make_agent(
-            mock_rate_limiter_all_ok, mock_tinyfish_always_fails, mock_amadeus_fails
+            mock_rate_limiter_all_ok, mock_tinyfish_always_fails, mock_skyscrapper_always_fails
         )
         result = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result.error is not None
@@ -454,12 +466,12 @@ class TestRouteScraperAgent:
         self,
         mock_rate_limiter_tinyfish_exhausted: MagicMock,
         mock_tinyfish_always_fails: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         agent = _make_agent(
             mock_rate_limiter_tinyfish_exhausted,
             mock_tinyfish_always_fails,
-            mock_amadeus_success,
+            mock_skyscrapper_success,
         )
         result = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result.fallback_used is True
@@ -467,7 +479,7 @@ class TestRouteScraperAgent:
     def test_past_fares_filtered(
         self,
         mock_rate_limiter_all_ok: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         past_date = date.today() - timedelta(days=1)
         # TinyFish returns fare with past travel_date
@@ -477,7 +489,7 @@ class TestRouteScraperAgent:
         tf_mock = MagicMock(spec=TinyFishClient)
         tf_mock.call_browser.return_value = past_fare_json
 
-        agent = _make_agent(mock_rate_limiter_all_ok, tf_mock, mock_amadeus_success)
+        agent = _make_agent(mock_rate_limiter_all_ok, tf_mock, mock_skyscrapper_success)
         # Scrape for the past date; validation will fail in _validate_travel_date
         result = agent.scrape_route(_ROUTE, past_date)
         assert result.error is not None  # travel date validation catches it
@@ -486,41 +498,41 @@ class TestRouteScraperAgent:
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         shared_dedup: set[str] = set()
         agent = _make_agent(
             mock_rate_limiter_all_ok,
             mock_tinyfish_success,
-            mock_amadeus_success,
+            mock_skyscrapper_success,
             dedup=shared_dedup,
         )
-        # First scrape — 3 fares stored
+        # First scrape â€” 3 fares stored
         result1 = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result1.fares_stored == 3
 
-        # Second scrape same fares — all duplicates, nothing stored
+        # Second scrape same fares â€” all duplicates, nothing stored
         result2 = agent.scrape_route(_ROUTE, _FUTURE_DATE)
         assert result2.fares_stored == 0
 
-    def test_rate_limit_triggers_amadeus(
+    def test_rate_limit_triggers_skyscrapper(
         self,
         mock_rate_limiter_tinyfish_exhausted: MagicMock,
         mock_tinyfish_always_fails: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         agent = _make_agent(
             mock_rate_limiter_tinyfish_exhausted,
             mock_tinyfish_always_fails,
-            mock_amadeus_success,
+            mock_skyscrapper_success,
         )
         result = agent.scrape_route(_ROUTE, _FUTURE_DATE)
-        # TinyFish was skipped (limit), Amadeus should have been called
-        mock_amadeus_success.fetch_fares.assert_called_once()
-        assert result.source_used == "amadeus"
+        # TinyFish was skipped (limit), Sky Scrapper should have been called
+        mock_skyscrapper_success.fetch_fares.assert_called_once()
+        assert result.source_used == "skyscrapper"
 
 
-# ─── TestScraperOrchestrator ──────────────────────────────────────────────────
+# â”€â”€â”€ TestScraperOrchestrator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestScraperOrchestrator:
@@ -540,7 +552,7 @@ class TestScraperOrchestrator:
         orch._route_agent = RouteScraperAgent(
             rate_limiter=rl_mock,
             tinyfish_client=tf_mock,
-            amadeus_client=am_mock,
+            amadeus_client=am_mock,  # legacy alias accepted by RouteScraperAgent
             dedup_set=orch._dedup,
         )
         import logging
@@ -555,10 +567,10 @@ class TestScraperOrchestrator:
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         orch = self._make_orchestrator(
-            [], mock_tinyfish_success, mock_amadeus_success, mock_rate_limiter_all_ok
+            [], mock_tinyfish_success, mock_skyscrapper_success, mock_rate_limiter_all_ok
         )
         with self._patch_sleep():
             result = orch.run()
@@ -570,7 +582,7 @@ class TestScraperOrchestrator:
         mocker: Any,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         routes = [
             {"route": "NAG-DEL", "travel_dates": [_FUTURE_DATE.isoformat()], "check_every_hours": 6},
@@ -578,7 +590,7 @@ class TestScraperOrchestrator:
         ]
         mocker.patch("agents.scraper_agent.queries.get_all_active_routes", return_value=routes)
         orch = self._make_orchestrator(
-            routes, mock_tinyfish_success, mock_amadeus_success, mock_rate_limiter_all_ok
+            routes, mock_tinyfish_success, mock_skyscrapper_success, mock_rate_limiter_all_ok
         )
         with self._patch_sleep():
             result = orch.run()
@@ -590,7 +602,7 @@ class TestScraperOrchestrator:
         mocker: Any,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_always_fails: MagicMock,
-        mock_amadeus_fails: MagicMock,
+        mock_skyscrapper_always_fails: MagicMock,
     ) -> None:
         routes = [
             {"route": "NAG-DEL", "travel_dates": [_FUTURE_DATE.isoformat()], "check_every_hours": 6},
@@ -598,7 +610,7 @@ class TestScraperOrchestrator:
         ]
         mocker.patch("agents.scraper_agent.queries.get_all_active_routes", return_value=routes)
         orch = self._make_orchestrator(
-            routes, mock_tinyfish_always_fails, mock_amadeus_fails, mock_rate_limiter_all_ok
+            routes, mock_tinyfish_always_fails, mock_skyscrapper_always_fails, mock_rate_limiter_all_ok
         )
         with self._patch_sleep():
             result = orch.run()
@@ -610,7 +622,7 @@ class TestScraperOrchestrator:
     def test_cooldown_routes_skipped(
         self,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         rl_mock = MagicMock(spec=RateLimiter)
         rl_mock.can_scrape_route.return_value = False  # all routes on cooldown
@@ -618,7 +630,7 @@ class TestScraperOrchestrator:
             {"route": "NAG-DEL", "travel_dates": [_FUTURE_DATE.isoformat()]},
         ]
         orch = self._make_orchestrator(
-            routes, mock_tinyfish_success, mock_amadeus_success, rl_mock
+            routes, mock_tinyfish_success, mock_skyscrapper_success, rl_mock
         )
         with self._patch_sleep():
             result = orch.run()
@@ -629,12 +641,12 @@ class TestScraperOrchestrator:
         mocker: Any,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         routes = [{"route": "NAG-DEL", "travel_dates": [_FUTURE_DATE.isoformat()], "check_every_hours": 6}]
         mocker.patch("agents.scraper_agent.queries.get_all_active_routes", return_value=routes)
         orch = self._make_orchestrator(
-            routes, mock_tinyfish_success, mock_amadeus_success, mock_rate_limiter_all_ok
+            routes, mock_tinyfish_success, mock_skyscrapper_success, mock_rate_limiter_all_ok
         )
         with self._patch_sleep():
             orch.run()
@@ -646,11 +658,11 @@ class TestScraperOrchestrator:
         self,
         mock_rate_limiter_all_ok: MagicMock,
         mock_tinyfish_success: MagicMock,
-        mock_amadeus_success: MagicMock,
+        mock_skyscrapper_success: MagicMock,
     ) -> None:
         routes = [{"route": "NAG-DEL", "travel_dates": [_FUTURE_DATE.isoformat()]}]
         orch = self._make_orchestrator(
-            routes, mock_tinyfish_success, mock_amadeus_success, mock_rate_limiter_all_ok
+            routes, mock_tinyfish_success, mock_skyscrapper_success, mock_rate_limiter_all_ok
         )
         with self._patch_sleep():
             result = orch.run()
@@ -659,7 +671,7 @@ class TestScraperOrchestrator:
         assert result.total_fares_stored == db_count
 
 
-# ─── TestRateLimiter ──────────────────────────────────────────────────────────
+# â”€â”€â”€ TestRateLimiter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestRateLimiter:
@@ -671,7 +683,7 @@ class TestRateLimiter:
     def test_cooldown_blocks_too_soon(self, tmp_state: Path) -> None:
         rl = RateLimiter(state_file=tmp_state)
         rl.record_scrape("NAG-DEL", _FUTURE_DATE)
-        # Check immediately — should be blocked (0 minutes elapsed < 300)
+        # Check immediately â€” should be blocked (0 minutes elapsed < 300)
         assert rl.can_scrape_route("NAG-DEL", _FUTURE_DATE, min_interval_minutes=300) is False
 
     def test_cooldown_clears_after_interval(self, tmp_state: Path) -> None:
@@ -718,13 +730,13 @@ class TestRateLimiter:
         state_after = rl._read_state()
         assert state_after["tinyfish_calls_today"]["browser"] == 1
 
-    def test_amadeus_limit_blocks(self, tmp_state: Path) -> None:
-        from agents.rate_limiter import AMADEUS_DAILY_LIMIT
+    def test_skyscrapper_limit_blocks(self, tmp_state: Path) -> None:
+        from agents.rate_limiter import SKYSCRAPPER_DAILY_LIMIT
         rl = RateLimiter(state_file=tmp_state)
         state = rl._read_state()
-        state["amadeus_calls_today"]["count"] = AMADEUS_DAILY_LIMIT
+        state["skyscrapper_calls_today"]["count"] = SKYSCRAPPER_DAILY_LIMIT
         rl._write_state(state)
-        assert rl.can_use_amadeus() is False
+        assert rl.can_use_skyscrapper() is False
 
     def test_state_persists_across_instances(self, tmp_state: Path) -> None:
         rl1 = RateLimiter(state_file=tmp_state)
@@ -736,7 +748,7 @@ class TestRateLimiter:
         assert state["tinyfish_calls_today"]["browser"] == 2
 
     def test_concurrent_state_writes(self, tmp_state: Path) -> None:
-        """10 threads each call record_scrape — no file corruption."""
+        """10 threads each call record_scrape â€” no file corruption."""
         rl = RateLimiter(state_file=tmp_state)
         errors: list[Exception] = []
 
@@ -758,3 +770,4 @@ class TestRateLimiter:
         # Verify file is valid JSON with all 10 entries
         state = rl._read_state()
         assert len(state["last_scraped"]) == 10
+

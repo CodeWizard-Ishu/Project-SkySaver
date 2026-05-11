@@ -3,12 +3,12 @@
 Three-tier architecture:
   Tier 1 - ScraperOrchestrator: owns the full scrape run lifecycle.
   Tier 2 - RouteScraperAgent:   scrapes one route+date pair, tries all sources.
-  Tier 3 - TinyFish/Amadeus clients: thin wrappers with retry logic.
+  Tier 3 - TinyFish/SkyScrapper clients: thin wrappers with retry logic.
 
 External calls:
-  • TinyFish Browser (Skyscanner) — primary, DataDome bypass via headless Chromium
+  • TinyFish Browser (Skyscanner)  — primary, DataDome bypass via headless Chromium
   • TinyFish Fetch  (Google Flights) — secondary, faster no-JS path
-  • Amadeus Flight Offers Search API — official fallback, structured JSON
+  • Sky Scrapper API (RapidAPI)    — Tier 3 fallback, structured JSON via REST
 
 Never imports sqlite3 directly; all DB access via db.queries.
 """
@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timezone
 from typing import Optional
+
+import requests
 
 from tenacity import (
     before_sleep_log,
@@ -44,7 +46,7 @@ import db.queries as queries
 _log_orch = get_logger("flight_agent.scraper.orchestrator", "scraper.log")
 _log_route = get_logger("flight_agent.scraper.route", "scraper.log")
 _log_tf = get_logger("flight_agent.scraper.tinyfish", "scraper.log")
-_log_am = get_logger("flight_agent.scraper.amadeus", "scraper.log")
+_log_ss = get_logger("flight_agent.scraper.skyscrapper", "scraper.log")
 
 # ─── MODULE CONSTANTS ─────────────────────────────────────────────────────────
 
@@ -160,8 +162,8 @@ class TinyFishInvalidResponseError(ScraperError):
     """TinyFish returned a response that cannot be parsed as valid fare data."""
 
 
-class AmadeusServerError(ScraperError):
-    """Amadeus returned HTTP 5xx."""
+class SkyScrapprrAPIError(ScraperError):
+    """Sky Scrapper API returned HTTP 5xx or irrecoverable error."""
 
 
 class PriceParseError(ScraperError):
@@ -180,7 +182,7 @@ class ScrapedFare:
     price_inr: int      # whole INR
     airline: str        # canonical airline name
     stops: int          # 0=non-stop, 1=one-stop, 2=two-stop
-    source: str         # "skyscanner" | "google_flights" | "amadeus"
+    source: str         # "skyscanner" | "google_flights" | "skyscrapper"
     raw_price_str: str  # original price string e.g. "₹3,240"
     scraped_at: datetime
 
@@ -194,7 +196,7 @@ class RouteScapeResult:
     fares_found: int
     fares_stored: int
     source_used: str       # which source actually returned data
-    fallback_used: bool    # True if Amadeus fallback was triggered
+    fallback_used: bool    # True if Sky Scrapper fallback was triggered
     error: Optional[str]   # None if successful
     duration_seconds: float
 
@@ -839,18 +841,24 @@ class TinyFishClient:
             ) from exc
 
 
-# ─── AMADEUS CLIENT (TIER 3) ─────────────────────────────────────────────────
+class SkyScrappperClient:
+    """Thin wrapper around the Sky Scrapper API (RapidAPI).
 
+    Implements a two-step call pattern:
+      Step 1: searchAirport — resolve IATA code to skyId + entityId (cached).
+      Step 2: searchFlightsComplete — fetch itineraries and parse fares.
 
-class AmadeusClient:
-    """Thin wrapper around Amadeus Flight Offers Search API.
-
-    Handles OAuth2 auth automatically via the official SDK.
-    Retry strategy: 2 attempts, 30s fixed wait, only on server errors (5xx).
+    Retry strategy: 2 attempts, 30s fixed wait, retries on SkyScrapprrAPIError.
+    entity_cache is instance-level (not module-level) for thread safety.
     """
 
+    _BASE_HOST = "sky-scrapper.p.rapidapi.com"
+    _BASE_URL = f"https://{_BASE_HOST}"
+
     def __init__(self) -> None:
-        self._logger = _log_am
+        self._api_key = os.getenv("RAPIDAPI_KEY", "")
+        self._logger = _log_ss
+        self.entity_cache: dict[str, dict[str, str]] = {}  # IATA → {skyId, entityId}
 
     def fetch_fares(
         self,
@@ -858,24 +866,23 @@ class AmadeusClient:
         travel_date: date,
         max_results: int = 5,
     ) -> list[ScrapedFare]:
-        """Fetch flight offers from Amadeus and return normalised ScrapedFare list.
+        """Fetch flight offers from Sky Scrapper and return normalised ScrapedFare list.
 
         Args:
             route: Route string e.g. ``"NAG-DEL"``.
             travel_date: Departure date.
-            max_results: Maximum offers to request from API.
+            max_results: Maximum fares to return (cheapest first).
 
         Returns:
-            List of :class:`ScrapedFare` objects. May be empty if no flights.
+            List of :class:`ScrapedFare` objects. May be empty if no flights found.
 
         Raises:
-            AmadeusServerError: On HTTP 5xx after retries.
-            ScraperError: On HTTP 401 (auth failure — config problem).
+            SkyScrapprrAPIError: On HTTP 5xx after retries.
         """
         origin, destination = _validate_route(route)
         self._logger.info(
             json.dumps({
-                "event": "amadeus_call_made",
+                "event": "skyscrapper_call_made",
                 "route": route,
                 "travel_date": travel_date.isoformat(),
             })
@@ -885,9 +892,9 @@ class AmadeusClient:
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_fixed(30),
-        retry=retry_if_exception_type(AmadeusServerError),
+        retry=retry_if_exception_type(SkyScrapprrAPIError),
         reraise=True,
-        before_sleep=before_sleep_log(_log_am, logging.WARNING),
+        before_sleep=before_sleep_log(_log_ss, logging.WARNING),
     )
     def _fetch_with_retry(
         self,
@@ -897,9 +904,115 @@ class AmadeusClient:
         route: str,
         max_results: int,
     ) -> list[ScrapedFare]:
-        return self._execute_amadeus_request(origin, destination, travel_date, route, max_results)
+        return self._execute_skyscrapper_request(
+            origin, destination, travel_date, route, max_results
+        )
 
-    def _execute_amadeus_request(
+    def _resolve_airport(self, iata: str) -> dict[str, str]:
+        """Resolve IATA code to skyId + entityId via searchAirport endpoint.
+
+        Results are cached on the instance so the same IATA is never looked up
+        twice within the lifetime of this client instance.
+
+        Args:
+            iata: 3-letter uppercase IATA code.
+
+        Returns:
+            Dict with ``skyId`` and ``entityId`` keys.
+
+        Raises:
+            SkyScrapprrAPIError: On 5xx from searchAirport.
+            ScraperError: On 4xx (bad IATA) or network failure.
+        """
+        if iata in self.entity_cache:
+            return self.entity_cache[iata]
+
+        url = f"{self._BASE_URL}/api/v1/flights/searchAirport"
+        headers = {
+            "x-rapidapi-host": self._BASE_HOST,
+            "x-rapidapi-key": self._api_key,
+        }
+        params = {"query": iata, "locale": "en-IN"}
+
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=20)
+        except requests.exceptions.Timeout as exc:
+            raise ScraperError(
+                f"Sky Scrapper searchAirport timed out for IATA {iata}"
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise ScraperError(
+                f"Sky Scrapper searchAirport network error for IATA {iata}: {exc}"
+            ) from exc
+
+        if resp.status_code == 429:
+            self._logger.warning(
+                json.dumps({
+                    "event": "skyscrapper_rate_limited",
+                    "step": "searchAirport",
+                    "iata": iata,
+                })
+            )
+            time.sleep(60)
+            # Retry once
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=20)
+            except requests.exceptions.RequestException as exc:
+                raise ScraperError(
+                    f"Sky Scrapper searchAirport retry failed for IATA {iata}: {exc}"
+                ) from exc
+            if resp.status_code == 429:
+                raise ScraperError(
+                    f"Sky Scrapper searchAirport still 429 after retry for IATA {iata}"
+                )
+
+        if resp.status_code >= 500:
+            raise SkyScrapprrAPIError(
+                f"Sky Scrapper searchAirport HTTP {resp.status_code} for IATA {iata}"
+            )
+        if not resp.ok:
+            self._logger.error(
+                json.dumps({
+                    "event": "skyscrapper_airport_error",
+                    "iata": iata,
+                    "status": resp.status_code,
+                })
+            )
+            raise ScraperError(
+                f"Sky Scrapper searchAirport HTTP {resp.status_code} for IATA {iata}"
+            )
+
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise ScraperError(
+                f"Sky Scrapper searchAirport non-JSON response for IATA {iata}"
+            ) from exc
+
+        # Extract first result with a valid entityId
+        places = data.get("data", [])
+        for place in places:
+            entity_id = str(place.get("entityId", ""))
+            sky_id = str(place.get("skyId", "") or iata)
+            if entity_id:
+                result = {"skyId": sky_id, "entityId": entity_id}
+                self.entity_cache[iata] = result
+                self._logger.debug(
+                    json.dumps({
+                        "event": "skyscrapper_airport_resolved",
+                        "iata": iata,
+                        "skyId": sky_id,
+                        "entityId": entity_id,
+                    })
+                )
+                return result
+
+        raise ScraperError(
+            f"Sky Scrapper searchAirport returned no valid entityId for IATA {iata}. "
+            f"Data: {str(places)[:200]}"
+        )
+
+    def _execute_skyscrapper_request(
         self,
         origin: str,
         destination: str,
@@ -907,196 +1020,189 @@ class AmadeusClient:
         route: str,
         max_results: int,
     ) -> list[ScrapedFare]:
-        """Perform the Amadeus API call and parse the response.
+        """Perform the two-step Sky Scrapper API call and parse fares.
 
         Args:
             origin: 3-letter IATA origin code.
             destination: 3-letter IATA destination code.
             travel_date: Departure date.
             route: Full route string for logging.
-            max_results: Max offers to request.
+            max_results: Max fares to return.
 
         Returns:
-            List of :class:`ScrapedFare` objects.
+            List of :class:`ScrapedFare` objects (up to *max_results*, cheapest first).
 
         Raises:
-            AmadeusServerError: On 5xx responses.
-            ScraperError: On 401 (auth failure).
+            SkyScrapprrAPIError: On 5xx from flight search endpoint.
+            ScraperError: On 4xx or resolution failure.
         """
+        # Step 1: resolve airport entity IDs
         try:
-            from amadeus import Client, ResponseError  # type: ignore[import-untyped]
-        except ImportError as exc:
+            origin_info = self._resolve_airport(origin)
+            dest_info = self._resolve_airport(destination)
+        except (SkyScrapprrAPIError, ScraperError):
+            raise
+
+        # Step 2: search flights
+        url = f"{self._BASE_URL}/api/v2/flights/searchFlightsComplete"
+        headers = {
+            "x-rapidapi-host": self._BASE_HOST,
+            "x-rapidapi-key": self._api_key,
+        }
+        params = {
+            "originSkyId": origin_info["skyId"],
+            "destinationSkyId": dest_info["skyId"],
+            "originEntityId": origin_info["entityId"],
+            "destinationEntityId": dest_info["entityId"],
+            "date": travel_date.isoformat(),
+            "cabinClass": "economy",
+            "adults": 1,
+            "currency": "INR",
+            "countryCode": "IN",
+            "market": "en-IN",
+        }
+
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+        except requests.exceptions.Timeout as exc:
+            raise SkyScrapprrAPIError(
+                f"Sky Scrapper searchFlights timed out for route {route}"
+            ) from exc
+        except requests.exceptions.RequestException as exc:
             raise ScraperError(
-                "amadeus package not installed. Run: pip install amadeus"
+                f"Sky Scrapper searchFlights network error for route {route}: {exc}"
             ) from exc
 
-        client = Client(
-            client_id=os.getenv("AMADEUS_CLIENT_ID", ""),
-            client_secret=os.getenv("AMADEUS_CLIENT_SECRET", ""),
-            hostname="production",
-            log_level="silent",
-        )
-
-        try:
-            response = client.shopping.flight_offers_search.get(
-                originLocationCode=origin,
-                destinationLocationCode=destination,
-                departureDate=travel_date.isoformat(),
-                adults=1,
-                max=max_results,
-                currencyCode="INR",
-                nonStop=False,
+        if resp.status_code == 429:
+            self._logger.warning(
+                json.dumps({
+                    "event": "skyscrapper_rate_limited",
+                    "step": "searchFlights",
+                    "route": route,
+                })
             )
-        except Exception as exc:
-            return self._handle_amadeus_error(exc, route)
+            time.sleep(60)
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=30)
+            except requests.exceptions.RequestException as exc:
+                raise ScraperError(
+                    f"Sky Scrapper searchFlights retry failed for route {route}: {exc}"
+                ) from exc
+            if resp.status_code == 429:
+                self._logger.warning(
+                    json.dumps({
+                        "event": "skyscrapper_rate_limit_retry_failed",
+                        "route": route,
+                    })
+                )
+                return []
 
-        offers = getattr(response, "data", []) or []
-        self._logger.info(
-            json.dumps({
-                "event": "amadeus_response",
-                "route": route,
-                "offers_received": len(offers),
-            })
-        )
-
-        if not offers:
+        if resp.status_code >= 500:
+            raise SkyScrapprrAPIError(
+                f"Sky Scrapper searchFlights HTTP {resp.status_code} for route {route}"
+            )
+        if not resp.ok:
+            self._logger.error(
+                json.dumps({
+                    "event": "skyscrapper_client_error",
+                    "route": route,
+                    "status": resp.status_code,
+                })
+            )
             return []
 
-        return self._parse_amadeus_offers(offers, route, travel_date)
-
-    def _handle_amadeus_error(self, exc: Exception, route: str) -> list[ScrapedFare]:
-        """Map Amadeus SDK exceptions to scraper exceptions or safe empty lists.
-
-        Args:
-            exc: Exception raised by the Amadeus SDK.
-            route: Route string for log context.
-
-        Returns:
-            Empty list for rate-limit (429) or no-result cases.
-
-        Raises:
-            AmadeusServerError: On 5xx.
-            ScraperError: On 401 (auth failure).
-        """
         try:
-            from amadeus import ResponseError  # type: ignore[import-untyped]
-        except ImportError:
-            raise ScraperError(f"Amadeus SDK error for route {route}: {exc}") from exc
+            body = resp.json()
+        except ValueError as exc:
+            raise ScraperError(
+                f"Sky Scrapper non-JSON response for route {route}"
+            ) from exc
 
-        if isinstance(exc, ResponseError):
-            status = getattr(exc, "status_code", None) or getattr(exc, "response", {})
-            if isinstance(status, dict):
-                status = status.get("statusCode", 0)
-            status = int(status) if status else 0
+        itineraries = (body.get("data") or {}).get("itineraries", [])
+        if not itineraries:
+            self._logger.info(
+                json.dumps({
+                    "event": "skyscrapper_no_flights",
+                    "route": route,
+                    "travel_date": travel_date.isoformat(),
+                })
+            )
+            return []
 
-            match status:
-                case 400:
-                    self._logger.error(
-                        json.dumps({
-                            "event": "amadeus_bad_request",
-                            "route": route,
-                            "status": 400,
-                            "error": str(exc),
-                        })
-                    )
-                    return []
-                case 401:
-                    self._logger.critical(
-                        json.dumps({
-                            "event": "amadeus_auth_failed",
-                            "route": route,
-                        })
-                    )
-                    raise ScraperError(
-                        f"Amadeus auth failed (401) for route {route}. "
-                        "Check AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET."
-                    ) from exc
-                case 429:
-                    self._logger.warning(
-                        json.dumps({
-                            "event": "amadeus_rate_limited",
-                            "route": route,
-                        })
-                    )
-                    return []
-                case _ if status >= 500:
-                    raise AmadeusServerError(
-                        f"Amadeus server error HTTP {status} for route {route}"
-                    ) from exc
-                case _:
-                    self._logger.error(
-                        json.dumps({
-                            "event": "amadeus_unexpected_error",
-                            "route": route,
-                            "error": str(exc),
-                        })
-                    )
-                    return []
+        self._logger.info(
+            json.dumps({
+                "event": "skyscrapper_response",
+                "route": route,
+                "itineraries_received": len(itineraries),
+            })
+        )
+        return self._parse_itineraries(itineraries, route, travel_date, max_results)
 
-        raise ScraperError(f"Unexpected Amadeus error for route {route}: {exc}") from exc
-
-    def _parse_amadeus_offers(
+    def _parse_itineraries(
         self,
-        offers: list[object],
+        itineraries: list[object],
         route: str,
         travel_date: date,
+        max_results: int,
     ) -> list[ScrapedFare]:
-        """Parse Amadeus offer objects into ScrapedFare list.
+        """Parse Sky Scrapper itinerary objects into sorted ScrapedFare list.
 
         Args:
-            offers: List of Amadeus offer dicts from response.data.
+            itineraries: Raw itinerary dicts from response["data"]["itineraries"].
             route: Route string.
             travel_date: Departure date.
+            max_results: Return at most this many fares (cheapest first).
 
         Returns:
-            List of valid :class:`ScrapedFare` objects.
+            Up to *max_results* valid :class:`ScrapedFare` objects.
         """
         fares: list[ScrapedFare] = []
         now = utcnow()
 
-        for offer in offers:
-            fare = self._parse_single_offer(offer, route, travel_date, now)
+        for itin in itineraries:
+            fare = self._parse_single_itinerary(itin, route, travel_date, now)
             if fare is not None:
                 fares.append(fare)
-        return fares
 
-    def _parse_single_offer(
+        # Sort cheapest first, return top N
+        fares.sort(key=lambda f: f.price_inr)
+        return fares[:max_results]
+
+    def _parse_single_itinerary(
         self,
-        offer: object,
+        itin: object,
         route: str,
         travel_date: date,
         now: datetime,
     ) -> Optional[ScrapedFare]:
-        """Convert one Amadeus offer dict to a ScrapedFare.
+        """Convert one Sky Scrapper itinerary dict to a ScrapedFare.
 
-        Args:
-            offer: Raw offer dict from Amadeus API.
-            route: Route string.
-            travel_date: Departure date.
-            now: UTC timestamp to use as scraped_at.
-
-        Returns:
-            :class:`ScrapedFare` on success, ``None`` on parse failure.
+        Returns ``None`` on any parse failure (logs DEBUG).
         """
         try:
-            if not isinstance(offer, dict):
+            if not isinstance(itin, dict):
                 return None
 
-            price_obj = offer.get("price", {})
-            raw_price_str = str(price_obj.get("grandTotal", "0"))
-            price_inr = _parse_price_inr(raw_price_str)
-
-            itineraries = offer.get("itineraries", [])
-            if not itineraries:
+            raw_price = itin.get("price", {}).get("raw")
+            if raw_price is None:
+                return None
+            price_inr = int(float(raw_price))
+            if price_inr <= 0:
                 return None
 
-            segments = itineraries[0].get("segments", [])
-            if not segments:
+            legs = itin.get("legs", [])
+            if not legs:
                 return None
+            leg = legs[0]
 
-            carrier_code = segments[0].get("carrierCode", "")
-            airline = _normalise_airline(carrier_code) if carrier_code else "Unknown"
-            stops = len(segments) - 1
+            marketing = (leg.get("carriers") or {}).get("marketing", [])
+            raw_airline = (marketing[0].get("name", "") if marketing else "") or ""
+            try:
+                airline = _normalise_airline(raw_airline) if raw_airline else "Unknown"
+            except ValueError:
+                airline = "Unknown"
+
+            stops = int(leg.get("stopCount", 0))
 
             return ScrapedFare(
                 route=route,
@@ -1104,21 +1210,20 @@ class AmadeusClient:
                 price_inr=price_inr,
                 airline=airline,
                 stops=stops,
-                source="amadeus",
-                raw_price_str=raw_price_str,
+                source="skyscrapper",
+                raw_price_str=str(raw_price),
                 scraped_at=now,
             )
-        except (PriceParseError, KeyError, IndexError, TypeError, ValueError) as exc:
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             self._logger.debug(
                 json.dumps({
                     "event": "fare_validation_failed",
                     "route": route,
-                    "source": "amadeus",
+                    "source": "skyscrapper",
                     "reason": str(exc),
                 })
             )
             return None
-
 
 # ─── ROUTE SCRAPER AGENT (TIER 2) ────────────────────────────────────────────
 
@@ -1127,9 +1232,9 @@ class RouteScraperAgent:
     """Responsible for scraping ONE route+date pair.
 
     Priority order:
-      1. TinyFish Browser → Skyscanner (if daily browser limit not reached)
-      2. TinyFish Fetch   → Google Flights (if daily fetch limit not reached)
-      3. Amadeus API      → official fallback (if daily Amadeus limit not reached)
+      1. TinyFish Browser  → Skyscanner       (if daily browser limit not reached)
+      2. TinyFish Fetch    → Google Flights   (if daily fetch limit not reached)
+      3. Sky Scrapper API  → RapidAPI fallback (if daily limit not reached)
       4. All sources exhausted → return error result, do NOT raise
 
     After getting fares from any source:
@@ -1142,12 +1247,15 @@ class RouteScraperAgent:
         self,
         rate_limiter: RateLimiter,
         tinyfish_client: Optional[TinyFishClient] = None,
-        amadeus_client: Optional[AmadeusClient] = None,
+        skyscrapper_client: Optional[SkyScrappperClient] = None,
+        # Legacy alias kept for test injection compatibility
+        amadeus_client: Optional[SkyScrappperClient] = None,
         dedup_set: Optional[set[str]] = None,
     ) -> None:
         self._rl = rate_limiter
         self._tf = tinyfish_client or TinyFishClient()
-        self._am = amadeus_client or AmadeusClient()
+        # Support both kwarg names: skyscrapper_client takes precedence
+        self._ss = skyscrapper_client or amadeus_client or SkyScrappperClient()
         self._dedup: set[str] = dedup_set if dedup_set is not None else set()
         self._logger = _log_route
 
@@ -1265,30 +1373,30 @@ class RouteScraperAgent:
                 json.dumps({
                     "event": "tinyfish_fetch_limit_reached",
                     "route": route,
-                    "action": "skipping_to_amadeus",
+                    "action": "skipping_to_skyscrapper",
                 })
             )
 
-        # ── Source 3: Amadeus fallback ────────────────────────────────────────
+        # ── Source 3: Sky Scrapper fallback ────────────────────────────────────
         self._logger.info(
             json.dumps({
                 "event": "tinyfish_exhausted",
                 "route": route,
-                "fallback": "amadeus",
+                "fallback": "skyscrapper",
             })
         )
-        if self._rl.can_use_amadeus():
-            fares = self._try_amadeus(route, travel_date)
+        if self._rl.can_use_skyscrapper():
+            fares = self._try_skyscrapper(route, travel_date)
             if fares is not None:
-                self._rl.record_amadeus_call()
+                self._rl.record_skyscrapper_call()
                 self._logger.info(
                     json.dumps({
-                        "event": "amadeus_fallback_used",
+                        "event": "skyscrapper_fallback_used",
                         "route": route,
                         "reason": "TinyFish sources exhausted",
                     })
                 )
-                return fares, "amadeus", True
+                return fares, "skyscrapper", True
 
         return None, "", False
 
@@ -1345,25 +1453,25 @@ class RouteScraperAgent:
                     "event": "tinyfish_fetch_failed",
                     "route": route,
                     "error": str(exc),
-                    "next": "trying_amadeus",
+                    "next": "trying_skyscrapper",
                 })
             )
             return None
 
-    def _try_amadeus(
+    def _try_skyscrapper(
         self, route: str, travel_date: date
     ) -> Optional[list[ScrapedFare]]:
-        """Attempt Amadeus fallback fetch.
+        """Attempt Sky Scrapper API fallback fetch.
 
         Returns:
             List of fares on success, ``None`` on total failure.
         """
         try:
-            return self._am.fetch_fares(route, travel_date)
-        except (AmadeusServerError, ScraperError) as exc:
+            return self._ss.fetch_fares(route, travel_date)
+        except (SkyScrapprrAPIError, ScraperError) as exc:
             self._logger.error(
                 json.dumps({
-                    "event": "amadeus_failed",
+                    "event": "skyscrapper_failed",
                     "route": route,
                     "error": str(exc),
                 })

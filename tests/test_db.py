@@ -383,7 +383,7 @@ class TestGetPriceHistory:
     def test_source_filter_works(self):
         travel = date(2026, 12, 15)
         _insert(price=4000, travel_date=travel, source="skyscanner")
-        _insert(price=4200, travel_date=travel, source="amadeus")
+        _insert(price=4200, travel_date=travel, source="skyscrapper")
         sky_only = Q.get_price_history("NAG-DEL", travel, source="skyscanner")
         assert len(sky_only) == 1
         assert sky_only[0].source == "skyscanner"
