@@ -53,6 +53,43 @@ def _reset_db_connection():
     queries._conn = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_jobs(tmp_path, monkeypatch):
+    """Clear in-memory job registry, redirect db/jobs.json, and mock the
+    pipeline runner so background threads never call real APIs during tests.
+    """
+    import api.routes.scrape as scrape_mod
+    from api.schemas import ScrapeRunResponse
+
+    # Default fast mock result — individual tests can override with their own patch
+    _default_result = ScrapeRunResponse(
+        routes_attempted=2,
+        routes_succeeded=2,
+        routes_failed=0,
+        total_fares_scraped=14,
+        alerts_sent=1,
+        retrain_triggered=False,
+        duration_seconds=0.01,
+        errors=[],
+    )
+
+    # Clear in-memory state before test
+    with scrape_mod._jobs_lock:
+        scrape_mod._jobs.clear()
+
+    # Redirect disk writes to tmp_path (don't pollute real db/)
+    monkeypatch.setattr(scrape_mod, "_JOBS_PATH", tmp_path / "jobs.json")
+
+    # Patch the pipeline runner so background threads return instantly
+    with patch.object(scrape_mod, "_run_pipeline_sync", return_value=_default_result):
+        yield
+
+    # Clean up any jobs started during the test
+    with scrape_mod._jobs_lock:
+        scrape_mod._jobs.clear()
+
+
+
 @pytest.fixture
 def client():
     """Create a fresh TestClient backed by an in-memory DB with schema."""
@@ -415,73 +452,89 @@ class TestPricesEndpoints:
 class TestScrapeEndpoints:
     """Tests for the scrape trigger and status endpoints."""
 
-    def test_scrape_run_triggers_pipeline(self, client):
-        """POST /scrape/run must invoke the pipeline runner."""
-        mock_result = MagicMock()
-        mock_result.scrape_result.routes_attempted = 2
-        mock_result.scrape_result.routes_succeeded = 2
-        mock_result.scrape_result.routes_failed = 0
-        mock_result.scrape_result.total_fares_scraped = 14
-        mock_result.alerts_sent = 1
-        mock_result.retrain_triggered = False
-        mock_result.errors = []
-
-        with patch("api.routes.scrape._run_pipeline_sync") as mock_run:
-            from api.schemas import ScrapeRunResponse
-            mock_run.return_value = ScrapeRunResponse(
-                routes_attempted=2,
-                routes_succeeded=2,
-                routes_failed=0,
-                total_fares_scraped=14,
-                alerts_sent=1,
-                retrain_triggered=False,
-                duration_seconds=12.5,
-                errors=[],
-            )
-            resp = client.post("/api/v1/scrape/run", headers=AUTH)
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        mock_run.assert_called_once()
-
-    def test_scrape_run_returns_summary(self, client):
-        with patch("api.routes.scrape._run_pipeline_sync") as mock_run:
-            from api.schemas import ScrapeRunResponse
-            mock_run.return_value = ScrapeRunResponse(
-                routes_attempted=3,
-                routes_succeeded=3,
-                routes_failed=0,
-                total_fares_scraped=21,
-                alerts_sent=2,
-                retrain_triggered=True,
-                duration_seconds=45.0,
-                errors=[],
-            )
-            resp = client.post("/api/v1/scrape/run", headers=AUTH)
-
-        data = resp.json()["data"]
-        assert "routes_attempted" in data
-        assert "alerts_sent" in data
-        assert "retrain_triggered" in data
-        assert "duration_seconds" in data
-        assert "errors" in data
+    def test_scrape_run_returns_202_and_job_id(self, client):
+        """POST /scrape/run must return 202 Accepted with a job_id immediately."""
+        resp = client.post("/api/v1/scrape/run", headers=AUTH)
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["success"] is True
+        data = body["data"]
+        assert "job_id" in data
+        assert data["status"] == "running"
+        assert "poll_url" in data
+        assert data["job_id"] in data["poll_url"]
 
     def test_scrape_run_dry_run_flag(self, client):
-        with patch("api.routes.scrape._run_pipeline_sync") as mock_run:
-            from api.schemas import ScrapeRunResponse
-            mock_run.return_value = ScrapeRunResponse(
-                routes_attempted=1, routes_succeeded=1, routes_failed=0,
-                total_fares_scraped=7, alerts_sent=0, retrain_triggered=False,
-                duration_seconds=5.0, errors=[],
-            )
-            resp = client.post(
-                "/api/v1/scrape/run",
-                json={"dry_run": True},
-                headers=AUTH,
-            )
+        """POST /scrape/run with dry_run=True also returns 202 + job_id."""
+        resp = client.post(
+            "/api/v1/scrape/run",
+            json={"dry_run": True},
+            headers=AUTH,
+        )
+        assert resp.status_code == 202
+        assert resp.json()["success"] is True
+        assert "job_id" in resp.json()["data"]
+
+    def test_scrape_run_conflict_when_already_running(self, client):
+        """A second POST /scrape/run while one is active returns 409 Conflict."""
+        import time
+        import api.routes.scrape as scrape_mod
+
+        # Inject a fake running job directly — avoids thread-timing races
+        fake_job_id = "test-conflict"
+        with scrape_mod._jobs_lock:
+            scrape_mod._jobs[fake_job_id] = {
+                "job_id": fake_job_id,
+                "status": "running",
+                "dry_run": False,
+                "started_at": time.time(),
+                "result": None,
+                "error": None,
+            }
+
+        r2 = client.post("/api/v1/scrape/run", headers=AUTH)
+        assert r2.status_code == 409
+        assert r2.json()["success"] is False
+
+    def test_scrape_job_poll_running(self, client):
+        """GET /scrape/job/{job_id} returns status and elapsed_seconds."""
+        r = client.post("/api/v1/scrape/run", headers=AUTH)
+        job_id = r.json()["data"]["job_id"]
+
+        poll = client.get(f"/api/v1/scrape/job/{job_id}", headers=AUTH)
+        assert poll.status_code == 200
+        data = poll.json()["data"]
+        assert data["job_id"] == job_id
+        assert data["status"] in ("running", "done", "error")
+        assert "elapsed_seconds" in data
+
+    def test_scrape_job_poll_not_found(self, client):
+        """GET /scrape/job/{unknown_id} returns 404."""
+        resp = client.get("/api/v1/scrape/job/nonexistent", headers=AUTH)
+        assert resp.status_code == 404
+
+    def test_scrape_running_endpoint_reflects_active_job(self, client):
+        """GET /scrape/running returns is_running=True when a job is active."""
+        import time
+        import api.routes.scrape as scrape_mod
+
+        # Inject a fake running job directly
+        fake_job_id = "test-running"
+        with scrape_mod._jobs_lock:
+            scrape_mod._jobs[fake_job_id] = {
+                "job_id": fake_job_id,
+                "status": "running",
+                "dry_run": False,
+                "started_at": time.time(),
+                "result": None,
+                "error": None,
+            }
+
+        resp = client.get("/api/v1/scrape/running", headers=AUTH)
         assert resp.status_code == 200
-        # dry_run=True should pass True to _run_pipeline_sync
-        mock_run.assert_called_once_with(True)
+        data = resp.json()["data"]
+        assert data["is_running"] is True
+        assert data["job"] is not None
 
     def test_scrape_last_run_no_file(self, client, tmp_path, monkeypatch):
         """GET /scrape/last-run returns data=null when no file exists."""

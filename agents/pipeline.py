@@ -283,7 +283,7 @@ class PipelineRunner:
         try:
             last_run_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-            tmp_path.rename(last_run_path)   # atomic on Linux (same filesystem)
+            tmp_path.replace(last_run_path)   # atomic replace (works on Windows too)
             _log.info(json.dumps({"event": "last_run_saved", "path": str(last_run_path)}))
         except Exception as exc:
             # Non-critical persistence step — log and continue; never kill the pipeline.

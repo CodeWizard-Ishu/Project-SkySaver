@@ -1,21 +1,88 @@
-# Python artifacts
+# ============================================================
+# SkySaver — .gitignore
+# ============================================================
+
+# ------ Secrets & Environment ------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# ------ Python Artifacts ------
 __pycache__/
 *.py[cod]
-.pytest_cache/
-venv/
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Databases
+# ------ Virtual Environments ------
+venv/
+.venv/
+env/
+ENV/
+
+# ------ Test & Coverage ------
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# ------ Databases & State ------
 *.db
 *.sqlite
-
-# Tool outputs
-graphify-out/cache/
-graphify-out/.graphify_*
-graphify-out/*.json
-
-# Project local state
+*.sqlite3
+*.db-shm
+*.db-wal
 db/rate_limiter_state.json
-logs/
-.coverage
+db/jobs.json
+db/last_run.json
 
-.env
+# ------ Logs ------
+logs/
+*.log
+
+# ------ ML Models (binary, large files) ------
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.pt
+models/*.onnx
+# Keep the placeholder
+!models/.gitkeep
+
+# ------ Graphify Tool Output ------
+graphify-out/
+# (Exclude the entire generated output directory)
+
+# ------ Scratch / Test Output Files ------
+fetch_test.txt
+ixigo_test.txt
+ml_test.txt
+url_test.txt
+pipeline_result.json
+*.test.txt
+
+# ------ IDE & OS Files ------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------ Jupyter ------
+.ipynb_checkpoints/
+*.ipynb
+
+# ------ Docker ------
+*.pid

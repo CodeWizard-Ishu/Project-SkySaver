@@ -220,7 +220,10 @@ def build_features(df: "pd.DataFrame") -> "pd.DataFrame":  # type: ignore[name-d
         if col in df.columns:
             df[col] = df[col].fillna(0.0)
 
-    return df[_FEATURE_COLUMNS + ["route", "travel_date", "observed_at", "price_inr"]]
+    # Return feature columns + passthrough metadata (exclude price_inr from passthrough
+    # since it is already in _FEATURE_COLUMNS to avoid duplicate column names)
+    passthrough = [c for c in ["route", "travel_date", "observed_at"] if c in df.columns]
+    return df[_FEATURE_COLUMNS + passthrough]
 
 
 def generate_labels(df: "pd.DataFrame", lookahead_days: int = _LOOKAHEAD_DAYS) -> "pd.Series":  # type: ignore[name-defined]
@@ -382,8 +385,16 @@ def train(route: Optional[str] = None) -> TrainingResult:
 
     # Time-based 80/20 split — most recent 20% goes to test (no data leakage)
     split_idx = int(len(feature_df) * 0.80)
-    X_train = feature_df[_FEATURE_COLUMNS].iloc[:split_idx]
-    X_test = feature_df[_FEATURE_COLUMNS].iloc[split_idx:]
+    # Build deduplicated feature column list (price_inr was sometimes doubled)
+    seen: set[str] = set()
+    feat_cols = []
+    for c in _FEATURE_COLUMNS:
+        if c in feature_df.columns and c not in seen:
+            feat_cols.append(c)
+            seen.add(c)
+    X = feature_df[feat_cols].copy()
+    X_train = X.iloc[:split_idx]
+    X_test = X.iloc[split_idx:]
     y_train = y.iloc[:split_idx]
     y_test = y.iloc[split_idx:]
 

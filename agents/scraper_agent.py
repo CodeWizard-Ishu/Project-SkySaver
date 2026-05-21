@@ -390,20 +390,27 @@ def _build_skyscanner_goal(
         Imperative goal string for the TinyFish Browser endpoint.
     """
     date_str = travel_date.strftime("%d %B %Y")
+    # Build a deep-link URL directly to search results (avoids landing-page CAPTCHA)
+    date_param = travel_date.strftime("%Y-%m-%d")
+    deep_url = (
+        f"https://www.skyscanner.co.in/transport/flights/{origin.lower()}/{destination.lower()}/"
+        f"{date_param.replace('-', '')}/"
+        f"?adults=1&adultsv2=1&cabinclass=economy&children=0&inboundaltsenabled=false"
+        f"&infants=0&outboundaltsenabled=false&preferdirects=false&ref=home&rtn=0"
+    )
     return (
-        f"Go to https://www.skyscanner.com and search for one-way flights "
-        f"from {origin} to {destination} departing on {date_str}. "
-        f"Wait for the results to fully load (price list must be visible). "
-        f"Extract the 5 cheapest available fares from the results list. "
-        f"For each fare, return a JSON object with these exact keys: "
-        f"price_inr (integer, convert any currency to Indian Rupees at current rate, no symbol, no commas), "
+        f"Navigate to {deep_url} which is the Skyscanner India flight search page. "
+        f"Wait up to 15 seconds for the flight results list to load (you will see price cards). "
+        f"If a CAPTCHA appears, try refreshing once and waiting. "
+        f"Extract the 5 cheapest one-way fares from the results list departing on {date_str}. "
+        f"For each fare return a JSON object with these exact keys: "
+        f"price_inr (integer in Indian Rupees, no symbol, no commas — if shown in USD convert at 83x), "
         f"airline (carrier name string), "
         f"stops (integer: 0 for direct/non-stop, 1 for one-stop, 2 for two or more stops), "
-        f"departure_time (string HH:MM 24h format, e.g. '06:30'). "
-        f"Return ONLY a valid JSON array of exactly these objects. "
-        f"If fewer than 5 results are available, return what is available. "
-        f"If no results found, return an empty JSON array []. "
-        f"Do not include any explanation text outside the JSON array."
+        f"departure_time (string HH:MM 24h format e.g. '06:30', or null if not shown). "
+        f"Return ONLY a valid JSON array. No explanation text. "
+        f"If fewer than 5 results are visible return what is available. "
+        f"If no results appear at all return []."
     )
 
 
@@ -412,26 +419,28 @@ def _build_google_flights_goal(
 ) -> str:
     """Construct the TinyFish Fetch goal string for Google Flights.
 
+    Uses a direct search URL with IATA codes and date embedded so TinyFish
+    Fetch retrieves actual search result content, not just the homepage.
+
     Args:
         origin: 3-letter IATA code.
         destination: 3-letter IATA code.
         travel_date: Departure date.
 
     Returns:
-        Imperative goal string for the TinyFish Fetch endpoint.
+        Target URL string for the TinyFish Fetch endpoint.
     """
     date_str = travel_date.strftime("%Y-%m-%d")
-    base_url = "https://www.google.com/travel/flights"
-    return (
-        f"Fetch the flight results from {base_url} for {origin} to "
-        f"{destination} on {date_str}. "
-        f"Search for one-way flights departing on that date. "
-        f"Extract up to 5 flight fares from the page. "
-        f"Return a JSON array with objects containing: "
-        f"price_inr (integer), airline (string), stops (integer 0/1/2), "
-        f"departure_time (string HH:MM or null). "
-        f"Return only the JSON array, no other text."
+    date_compact = travel_date.strftime("%Y%m%d")  # YYYYMMDD for URL
+    # Google Flights one-way deep link — include exact departure date in the path
+    # Format: /travel/flights/flights-from-ORIG-to-DEST/ORIG-DEST-YYYYMMDD/
+    search_url = (
+        f"https://www.google.com/travel/flights/flights-from-{origin}-to-{destination}"
+        f"/{origin}-{destination}-{date_compact}/"
+        f"?hl=en&gl=IN&curr=INR"
     )
+    return search_url
+
 
 
 # ─── TINYFISH RESPONSE PARSER ─────────────────────────────────────────────────
@@ -798,21 +807,22 @@ class TinyFishClient:
         }
 
         if endpoint == "browser":
-            # Extract the starting URL from the goal string ("Go to <url> and ...")
+            # Build a deep-link URL that goes directly to search results (less CAPTCHA exposure).
+            # Use skyscanner.co.in + India residential proxy for minimal bot detection.
             url_match = re.search(r"https?://[^\s]+", goal)
-            start_url = url_match.group(0).rstrip(".") if url_match else "https://www.skyscanner.co.in"
+            start_url = url_match.group(0).split("?")[0] if url_match else "https://www.skyscanner.co.in"
             api_url = "https://agent.tinyfish.ai/v1/automation/run"
             payload = json.dumps({
                 "url": start_url,
                 "goal": goal,
-                "browser_profile": "stealth",      # fingerprint randomisation + anti-bot headers
+                "browser_profile": "stealth",
                 "proxy_config": {
                     "enabled": True,
-                    "type": "tetra",               # TinyFish managed rotating residential proxies
-                    "country_code": "US",          # US tetra proxy — lighter DataDome checks than GB
+                    "type": "tetra",
+                    "country_code": "US",   # US proxy — IN not supported by TinyFish
                 },
             }).encode("utf-8")
-            timeout = 180  # proxy + stealth combo can add 30-60s on top of normal browser runs
+            timeout = 180
         else:
             # fetch: extract the URL from the goal and hand it to the fetch API
             url_match = re.search(r"https?://[^\s]+", goal)
@@ -882,10 +892,15 @@ class TinyFishClient:
             try:
                 data = json.loads(raw)
                 status = data.get("status", "")
+                # TinyFish returns blocked status as a JSON object, not FAILED
                 if status == "FAILED":
                     err = data.get("error") or {}
                     raise ScraperError(
                         f"TinyFish agent run FAILED for route {route}: {err}"
+                    )
+                if status == "blocked":
+                    raise TinyFishInvalidResponseError(
+                        f"TinyFish browser BLOCKED (CAPTCHA) for route {route}: {data.get('reason', '')}"
                     )
                 result = data.get("result")
                 if result is None:
@@ -898,11 +913,22 @@ class TinyFishClient:
                 return raw  # pass raw through; _parse_tinyfish_response will handle
 
         else:
-            # Fetch API returns: [{"url": ..., "content": "<markdown>", ...}]
+            # Fetch API returns: {"results": [{"url": ..., "text": "<markdown>", ...}], "errors": []}
+            # Older versions returned: [{"url": ..., "content": "<markdown>"}]
+            # We handle both. Extract 'text' first (new), then 'content'/'markdown' (old).
             try:
-                items = json.loads(raw)
-                if isinstance(items, list) and items:
-                    content = items[0].get("content") or items[0].get("markdown") or raw
+                data = json.loads(raw)
+                # New format: {"results": [...]}
+                if isinstance(data, dict) and "results" in data:
+                    results = data["results"]
+                    if results:
+                        first = results[0]
+                        content = first.get("text") or first.get("content") or first.get("markdown") or raw
+                        return content
+                # Old format: [{...}]
+                elif isinstance(data, list) and data:
+                    first = data[0]
+                    content = first.get("text") or first.get("content") or first.get("markdown") or raw
                     return content
             except (json.JSONDecodeError, IndexError, KeyError):
                 pass
@@ -1023,7 +1049,7 @@ class SkyScrappperClient:
                     "iata": iata,
                 })
             )
-            time.sleep(60)
+            time.sleep(5)  # brief pause before retry (60s was excessive for already-exhausted quota)
             # Retry once
             try:
                 resp = requests.get(url, headers=headers, params=params, timeout=20)
@@ -1151,7 +1177,7 @@ class SkyScrappperClient:
                     "route": route,
                 })
             )
-            time.sleep(60)
+            time.sleep(5)  # brief pause before retry
             try:
                 resp = requests.get(url, headers=headers, params=params, timeout=30)
             except requests.exceptions.RequestException as exc:
@@ -1295,7 +1321,103 @@ class SkyScrappperClient:
             )
             return None
 
+
+# ─── GEMINI MARKDOWN FARE EXTRACTOR ─────────────────────────────────────────
+
+
+def _extract_fares_from_markdown(
+    markdown: str,
+    route: str,
+    travel_date: date,
+) -> str:
+    """Use Gemini Flash to extract a JSON fare array from raw markdown content.
+
+    Called when TinyFish Fetch returns markdown page content (not a JSON array).
+    Sends the content to Gemini 2.5 Flash with the SCRAPER_SYSTEM_PROMPT and
+    returns the raw JSON array string for downstream parsing.
+
+    Args:
+        markdown: Raw markdown/text content from TinyFish Fetch.
+        route: Route string for logging context.
+        travel_date: Departure date (embedded in prompt for context).
+
+    Returns:
+        A JSON array string e.g. '[{"price_inr": 3240, ...}]' or '[]'.
+
+    Raises:
+        TinyFishInvalidResponseError: If Gemini fails or returns no usable content.
+    """
+    from google import genai as google_genai
+    import os
+
+    _log_tf.info(
+        json.dumps({
+            "event": "gemini_fare_extraction_started",
+            "route": route,
+            "markdown_length": len(markdown),
+        })
+    )
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise TinyFishInvalidResponseError(
+            "GEMINI_API_KEY not set; cannot extract fares from markdown."
+        )
+
+    client = google_genai.Client(api_key=api_key)
+
+    date_str = travel_date.strftime("%d %B %Y")
+    full_prompt = (
+        f"{SCRAPER_SYSTEM_PROMPT}\n\n"
+        f"Extract flight fares for route {route} departing {date_str} "
+        f"from the following page content. "
+        f"Return ONLY a valid JSON array.\n\n"
+        f"PAGE CONTENT:\n{markdown[:12000]}"
+    )
+
+    # Try models in order — fall back if primary is overloaded (503) or quota-exhausted (429)
+    _models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    last_exc: Exception = Exception("No models tried")
+
+    for model_name in _models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=full_prompt,
+            )
+            raw_text = response.text.strip()
+            _log_tf.info(
+                json.dumps({
+                    "event": "gemini_fare_extraction_complete",
+                    "route": route,
+                    "model": model_name,
+                    "response_length": len(raw_text),
+                })
+            )
+            return raw_text
+        except Exception as exc:
+            _log_tf.warning(
+                json.dumps({
+                    "event": "gemini_model_failed",
+                    "route": route,
+                    "model": model_name,
+                    "error": str(exc)[:200],
+                    "action": "trying_next_model",
+                })
+            )
+            last_exc = exc
+            import time as _time
+            _time.sleep(2)
+
+    raise TinyFishInvalidResponseError(
+        f"All Gemini models failed for route {route}: {last_exc}"
+    ) from last_exc
+
+
+
+
 # ─── ROUTE SCRAPER AGENT (TIER 2) ────────────────────────────────────────────
+
 
 
 class RouteScraperAgent:
@@ -1504,13 +1626,23 @@ class RouteScraperAgent:
     ) -> Optional[list[ScrapedFare]]:
         """Attempt Google Flights scrape via TinyFish Fetch.
 
+        TinyFish Fetch returns raw markdown page content — NOT a JSON array.
+        We pass that markdown to Gemini Flash which extracts fare data as JSON.
+
         Returns:
             List of fares on success, ``None`` on any failure.
         """
         goal = _build_google_flights_goal(origin, destination, travel_date)
         try:
-            raw = self._tf.call_fetch(goal, route)
-            fares = _parse_tinyfish_response(raw, route, travel_date, "google_flights")
+            markdown_content = self._tf.call_fetch(goal, route)
+
+            # Fetch returns markdown — use Gemini Flash to extract fares
+            fare_json_str = _extract_fares_from_markdown(
+                markdown_content, route, travel_date
+            )
+            fares = _parse_tinyfish_response(
+                fare_json_str, route, travel_date, "google_flights"
+            )
             return fares
         except (
             TinyFishRateLimitError,
@@ -1521,6 +1653,16 @@ class RouteScraperAgent:
             self._logger.warning(
                 json.dumps({
                     "event": "tinyfish_fetch_failed",
+                    "route": route,
+                    "error": str(exc),
+                    "next": "trying_skyscrapper",
+                })
+            )
+            return None
+        except Exception as exc:
+            self._logger.warning(
+                json.dumps({
+                    "event": "tinyfish_fetch_llm_extraction_failed",
                     "route": route,
                     "error": str(exc),
                     "next": "trying_skyscrapper",
@@ -1749,7 +1891,7 @@ class ScraperOrchestrator:
 
             # Anti-detection jitter between routes
             if idx < len(all_pairs) - 1:
-                sleep_sec = random.uniform(8.0, 15.0)
+                sleep_sec = random.uniform(2.0, 4.0)  # reduced: Fetch API, not browser
                 self._logger.debug(
                     json.dumps({
                         "event": "inter_route_sleep",

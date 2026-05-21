@@ -1,15 +1,76 @@
 routes:
+  # ── NAG → DEL (Nagpur to Delhi) ─────────────────────────────────────────────
+  # 10 dates spread across 1–11 months ahead for rich ML training data
   - route: "NAG-DEL"
     travel_dates:
+      # Near-term (1–2 months) — high price volatility window
+      - "2026-06-15"
+      - "2026-06-28"
+      - "2026-07-10"
+      - "2026-07-25"
+      # Mid-term (3–5 months) — booking sweet-spot window
+      - "2026-08-20"
+      - "2026-09-05"
+      - "2026-10-10"
+      - "2026-11-01"
+      # Far-term (6–11 months) — early-bird pricing window
       - "2026-12-15"
-      - "2026-12-20"
       - "2026-12-25"
+      - "2027-01-15"
+      - "2027-02-20"
+      - "2027-03-10"
     check_every_hours: 6
     active: true
 
+  # ── NAG → BOM (Nagpur to Mumbai) ─────────────────────────────────────────────
+  # 10 dates for a second route to enable cross-route ML comparison
   - route: "NAG-BOM"
     travel_dates:
+      # Near-term
+      - "2026-06-20"
+      - "2026-07-05"
+      - "2026-07-20"
+      # Mid-term
+      - "2026-08-15"
+      - "2026-09-15"
+      - "2026-10-20"
+      - "2026-11-10"
+      # Far-term
       - "2026-12-15"
       - "2026-12-22"
+      - "2027-01-10"
+    check_every_hours: 6
+    active: true
+
+  # ── NAG → BLR (Nagpur to Bengaluru) ─────────────────────────────────────────
+  # Third route adds airline diversity (IndiGo + Air India + AirAsia)
+  - route: "NAG-BLR"
+    travel_dates:
+      # Near-term
+      - "2026-06-25"
+      - "2026-07-15"
+      # Mid-term
+      - "2026-09-01"
+      - "2026-10-05"
+      - "2026-11-20"
+      # Far-term
+      - "2026-12-20"
+      - "2027-01-20"
+    check_every_hours: 6
+    active: true
+
+  # ── NAG → HYD (Nagpur to Hyderabad) ─────────────────────────────────────────
+  # Fourth route — short-haul for price contrast with longer routes
+  - route: "NAG-HYD"
+    travel_dates:
+      # Near-term
+      - "2026-06-18"
+      - "2026-07-12"
+      # Mid-term
+      - "2026-08-25"
+      - "2026-10-15"
+      # Far-term
+      - "2026-12-10"
+      - "2026-12-28"
     check_every_hours: 6
     active: true

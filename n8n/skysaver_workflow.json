@@ -2,31 +2,31 @@
   "name": "SkySaver \u2014 6h Flight Price Monitor",
   "nodes": [
     {
-      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "id": "node-01-schedule",
       "name": "Every 6 Hours",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [240, 300],
+      "position": [80, 300],
       "parameters": {
         "rule": {
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 */6 * * *"
+              "expression": "0 2,8,14,20 * * *"
             }
           ]
         }
       }
     },
     {
-      "id": "a1b2c3d4-0002-4000-8000-000000000002",
-      "name": "Trigger Pipeline Run",
+      "id": "node-02-trigger",
+      "name": "POST \u2014 Trigger Pipeline",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [500, 300],
+      "position": [340, 300],
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1/api/v1/scrape/run",
+        "url": "http://127.0.0.1:8000/api/v1/scrape/run",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -41,46 +41,41 @@
           ]
         },
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "dry_run",
-              "value": "false"
-            }
-          ]
-        },
+        "contentType": "json",
+        "body": "{\"dry_run\": false}",
         "options": {
-          "timeout": 720000,
+          "timeout": 15000,
           "response": {
             "response": {
-              "responseFormat": "json"
+              "responseFormat": "json",
+              "neverError": true
             }
           }
         }
       },
-      "continueOnFail": false
+      "continueOnFail": true
     },
     {
-      "id": "a1b2c3d4-0003-4000-8000-000000000003",
-      "name": "Pipeline Succeeded?",
+      "id": "node-03-trigger-ok",
+      "name": "Trigger OK?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [760, 300],
+      "position": [580, 300],
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "loose"
           },
           "conditions": [
             {
-              "id": "cond-001",
-              "leftValue": "={{ $json.success }}",
-              "rightValue": true,
+              "id": "c1",
+              "leftValue": "={{ $json.data && $json.data.job_id }}",
+              "rightValue": "",
               "operator": {
-                "type": "boolean",
-                "operation": "equal"
+                "type": "string",
+                "operation": "notEmpty"
               }
             }
           ],
@@ -89,11 +84,142 @@
       }
     },
     {
-      "id": "a1b2c3d4-0004-4000-8000-000000000004",
-      "name": "Alerts Sent?",
+      "id": "node-04-set-context",
+      "name": "Set Job Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [820, 180],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "job_id",
+              "value": "={{ $json.data.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "polls_remaining",
+              "value": 80,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "job_status",
+              "value": "running",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-05-wait",
+      "name": "Wait 30s Between Polls",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1060, 180],
+      "parameters": {
+        "resume": "timeInterval",
+        "unit": "seconds",
+        "amount": 30
+      },
+      "webhookId": "skysaver-poll-wait"
+    },
+    {
+      "id": "node-06-poll",
+      "name": "GET \u2014 Poll Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 180],
+      "parameters": {
+        "method": "GET",
+        "url": "=http://127.0.0.1:8000/api/v1/scrape/job/{{ $('Set Job Context').item.json.job_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-SkySaver-Key",
+              "value": "={{ $env.SKYSAVER_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 12000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "node-07-done-check",
+      "name": "Still Running?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1020, 180],
+      "position": [1540, 180],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.data.status }}",
+              "rightValue": "running",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "node-08-decrement",
+      "name": "Decrement Counter",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 300],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "job_id",
+              "value": "={{ $('Set Job Context').item.json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "polls_remaining",
+              "value": "={{ $('Set Job Context').item.json.polls_remaining - 1 }}",
+              "type": "number"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-09-timeout-check",
+      "name": "Timeout?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2020, 300],
       "parameters": {
         "conditions": {
           "options": {
@@ -103,8 +229,64 @@
           },
           "conditions": [
             {
-              "id": "cond-002",
-              "leftValue": "={{ $json.data.alerts_sent }}",
+              "id": "c3",
+              "leftValue": "={{ $json.polls_remaining }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "node-10-success-check",
+      "name": "Pipeline Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 80],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c4",
+              "leftValue": "={{ $json.data.status }}",
+              "rightValue": "done",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "node-11-alerts-check",
+      "name": "Alerts Sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2020, 0],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c5",
+              "leftValue": "={{ $json.data.result.alerts_sent }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -117,14 +299,14 @@
       }
     },
     {
-      "id": "a1b2c3d4-0005-4000-8000-000000000005",
-      "name": "Send Success Summary",
+      "id": "node-12-tg-success",
+      "name": "Telegram: Success + Alerts",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1280, 100],
+      "position": [2260, -100],
       "parameters": {
-        "chatId": "={{ $credentials.telegramApi.chatId }}",
-        "text": "=\u2705 SkySaver pipeline completed\n\nRoutes checked: {{ $json.data.routes_attempted }}\nFares scraped: {{ $json.data.total_fares_scraped }}\nAlerts sent: {{ $json.data.alerts_sent }}\nDuration: {{ $json.data.duration_seconds }}s",
+        "chatId": "1009787919",
+        "text": "=\u2705 <b>SkySaver Run Complete</b>\n\n\ud83d\udee3\ufe0f Routes checked: <b>{{ $json.data.result.routes_attempted }}</b>\n\u2714\ufe0f Routes OK: <b>{{ $json.data.result.routes_succeeded }}</b>\n\u274c Routes failed: <b>{{ $json.data.result.routes_failed }}</b>\n\u2708\ufe0f Fares scraped: <b>{{ $json.data.result.total_fares_scraped }}</b>\n\ud83d\udd14 Alerts sent: <b>{{ $json.data.result.alerts_sent }}</b>\n\u23f1\ufe0f Duration: <b>{{ $json.data.result.duration_seconds }}s</b>\n\ud83e\udd16 Retrain triggered: <b>{{ $json.data.result.retrain_triggered }}</b>",
         "additionalFields": {
           "parse_mode": "HTML"
         }
@@ -137,22 +319,62 @@
       }
     },
     {
-      "id": "a1b2c3d4-0006-4000-8000-000000000006",
-      "name": "No Alerts — Skip Telegram",
+      "id": "node-13-noop-no-alerts",
+      "name": "No Alerts (quiet run)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1280, 260],
+      "position": [2260, 60],
       "parameters": {}
     },
     {
-      "id": "a1b2c3d4-0007-4000-8000-000000000007",
-      "name": "Send Failure Alert",
+      "id": "node-14-tg-job-fail",
+      "name": "Telegram: Pipeline Error",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1020, 460],
+      "position": [2020, 140],
       "parameters": {
-        "chatId": "={{ $credentials.telegramApi.chatId }}",
-        "text": "=\u26a0\ufe0f SkySaver pipeline FAILED\n\nErrors: {{ $json.error }}\n\nTime: {{ $now }}",
+        "chatId": "1009787919",
+        "text": "=\u26a0\ufe0f <b>SkySaver Pipeline Failed</b>\n\n\ud83d\udfe5 Job error: <code>{{ $json.data.error || 'Unknown error' }}</code>\n\u23f1\ufe0f Elapsed: {{ $json.data.elapsed_seconds }}s\n\ud83d\udd51 Time: {{ $now.toFormat('dd MMM HH:mm') }} IST\n\n<i>Job: {{ $('Set Job Context').item.json.job_id }}</i>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred-id",
+          "name": "Telegram API"
+        }
+      }
+    },
+    {
+      "id": "node-15-tg-timeout",
+      "name": "Telegram: Timeout",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2260, 360],
+      "parameters": {
+        "chatId": "1009787919",
+        "text": "=\u23f0 <b>SkySaver Timed Out</b>\n\nPipeline did not finish after 40+ minutes.\n\ud83d\udd51 Time: {{ $now.toFormat('dd MMM HH:mm') }} IST\n\n<i>Job: {{ $json.job_id }}</i>\n<i>Logs: journalctl -u skysaver.service -n 50</i>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred-id",
+          "name": "Telegram API"
+        }
+      }
+    },
+    {
+      "id": "node-16-tg-api-down",
+      "name": "Telegram: API Unreachable",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [820, 460],
+      "parameters": {
+        "chatId": "1009787919",
+        "text": "=\ud83d\udea8 <b>SkySaver API Unreachable</b>\n\nCould not reach FastAPI on port 8000.\n\n\ud83d\udd51 Time: {{ $now.toFormat('dd MMM HH:mm') }} IST\n\n<i>Is the SkySaver service running?</i>\n<code>systemctl status skysaver.service</code>",
         "additionalFields": {
           "parse_mode": "HTML"
         }
@@ -168,60 +390,62 @@
   "connections": {
     "Every 6 Hours": {
       "main": [
-        [
-          {
-            "node": "Trigger Pipeline Run",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "POST \u2014 Trigger Pipeline", "type": "main", "index": 0 }]
       ]
     },
-    "Trigger Pipeline Run": {
+    "POST \u2014 Trigger Pipeline": {
       "main": [
-        [
-          {
-            "node": "Pipeline Succeeded?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Trigger OK?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Trigger OK?": {
+      "main": [
+        [{ "node": "Set Job Context", "type": "main", "index": 0 }],
+        [{ "node": "Telegram: API Unreachable", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set Job Context": {
+      "main": [
+        [{ "node": "Wait 30s Between Polls", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 30s Between Polls": {
+      "main": [
+        [{ "node": "GET \u2014 Poll Job Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "GET \u2014 Poll Job Status": {
+      "main": [
+        [{ "node": "Still Running?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Still Running?": {
+      "main": [
+        [{ "node": "Decrement Counter", "type": "main", "index": 0 }],
+        [{ "node": "Pipeline Succeeded?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Decrement Counter": {
+      "main": [
+        [{ "node": "Timeout?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Timeout?": {
+      "main": [
+        [{ "node": "Telegram: Timeout", "type": "main", "index": 0 }],
+        [{ "node": "Wait 30s Between Polls", "type": "main", "index": 0 }]
       ]
     },
     "Pipeline Succeeded?": {
       "main": [
-        [
-          {
-            "node": "Alerts Sent?",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Send Failure Alert",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Alerts Sent?", "type": "main", "index": 0 }],
+        [{ "node": "Telegram: Pipeline Error", "type": "main", "index": 0 }]
       ]
     },
     "Alerts Sent?": {
       "main": [
-        [
-          {
-            "node": "Send Success Summary",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "No Alerts \u2014 Skip Telegram",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Telegram: Success + Alerts", "type": "main", "index": 0 }],
+        [{ "node": "No Alerts (quiet run)", "type": "main", "index": 0 }]
       ]
     }
   },
@@ -230,12 +454,14 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "",
+    "executionTimeout": 7200,
+    "timezone": "Asia/Kolkata"
   },
   "tags": [
     {
       "createdAt": "2026-05-07T00:00:00.000Z",
-      "updatedAt": "2026-05-07T00:00:00.000Z",
+      "updatedAt": "2026-05-20T00:00:00.000Z",
       "id": "tag-skysaver-001",
       "name": "skysaver"
     }

@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-05-10T21:38:12Z",
-  "finished_at": "2026-05-10T21:38:12Z",
+  "started_at": "2026-05-21T11:37:19Z",
+  "finished_at": "2026-05-21T11:37:19Z",
   "routes_attempted": 1,
   "routes_succeeded": 1,
   "routes_failed": 1,
@@ -9,6 +9,6 @@
   "alerts_sent": 0,
   "alerts_suppressed": 1,
   "retrain_triggered": false,
-  "total_duration_seconds": 0.001483,
+  "total_duration_seconds": 0.002258,
   "errors": []
 }
